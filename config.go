@@ -1,7 +1,6 @@
-// Package organisation: every file in this repository owns exactly one job.
-//
 // config.go is the only file that knows environment variable names.
 // It parses them once into a Config and nothing else.
+
 package main
 
 import (

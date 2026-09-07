@@ -1,7 +1,11 @@
+// Package main implements an Open Service Broker API broker that provisions
+// openGauss/GaussDB logical databases as service instances (tenants) and
+// scoped user accounts as bindings. Every file owns exactly one job; the
+// responsibility of each is stated at its top.
+//
 // main.go is wiring only: it builds the configuration, plans, state store,
 // admin and broker, exposes /healthz and starts the HTTP server. Every OSB
 // request is answered by brokerapi calling the Broker.
-
 package main
 
 import (

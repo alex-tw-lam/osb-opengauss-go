@@ -168,11 +168,9 @@ func TestProvisionRejectsExistingObjects(t *testing.T) {
 	db := newFakeDB()
 	db.databases[names.Database] = true
 	err := NewAdmin(testConfig("role_quota"), db).Provision(context.Background(), names, instanceParams())
-	var exists AlreadyExistsError
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected AlreadyExistsError, got %v", err)
 	}
-	_ = exists
 }
 
 func TestBindEmitsExpectedSQL(t *testing.T) {
