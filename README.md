@@ -14,8 +14,8 @@ implement the same SQL and the same behaviour.
 | Binding | a **login user account** (`CREATE USER`), member of one group role (access boundary), with its own `CONNECTION LIMIT` and the plan's space quotas |
 
 Built with [brokerapi](https://code.cloudfoundry.org/brokerapi/v13) (the
-Cloud Foundry OSB library), [pgx](https://github.com/jackc/pgx) and
-[bbolt](https://go.etcd.io/bbolt). Requires Go **1.25.10** (pinned in
+Cloud Foundry OSB library), [gaussdb-go](https://github.com/HuaweiCloudDeveloper/gaussdb-go)
+and [bbolt](https://go.etcd.io/bbolt). Requires Go **1.25.10** (pinned in
 go.mod). The SQL statements this broker issues were validated against a live
 openGauss 7.0.0-RC3 server and cross-checked against the GaussDB
 (centralized V2.0-10.x) SQL reference; see the Python repository's
@@ -23,19 +23,19 @@ openGauss 7.0.0-RC3 server and cross-checked against the GaussDB
 
 ## Driver and authentication
 
-pgx speaks the PostgreSQL protocol: **md5 and SCRAM, not openGauss's sha256**.
-The server must therefore accept md5 for the broker admin:
+The broker uses [gaussdb-go](https://github.com/HuaweiCloudDeveloper/gaussdb-go),
+a pgx fork maintained by the same Huawei org as the Python repository's
+driver. It speaks openGauss's native **sha256** authentication, so the secure
+server default works out of the box:
 
-* `password_encryption_type = 0` (md5) or `1` (sha256+md5 dual) in
-  postgresql.conf, and a matching `md5` line for the broker host in
-  `pg_hba.conf`, and the admin password (re)set while that value is active.
-* Tenants take note too: binding users are hashed with the server's current
+* `password_encryption_type = 2` (sha256 only) — supported directly; no
+  server-side workaround needed for the broker's admin connection.
+* `password_encryption_type = 0`/`1` (md5) — also supported.
+* Tenants take note: binding users are hashed with the server's current
   `password_encryption_type`, so applications connecting with ordinary
-  PostgreSQL clients need the same dual-hash setting (`1`) unless they use a
-  GaussDB-aware driver.
-* For native sha256 support Huawei ships a GaussDB Go driver inside the
-  GaussDB driver zip (not distributed as a Go module); this repository keeps
-  to module-distributed dependencies instead.
+  PostgreSQL clients need the dual-hash setting (`1`) unless they too use a
+  GaussDB-aware driver (verified live: gaussdb-go completes the sha256
+  handshake against a type-2-only server).
 
 ## Plans
 
@@ -126,7 +126,7 @@ curl $AUTH -H "$H" -X PUT "localhost:5000/v2/service_instances/<uuid>/service_bi
 | `plans.go` | Loads `plans.toml` (data), validates it, assembles the catalog |
 | `params.go` | Request rules: parameter validation and the matching JSON schemas |
 | `gaussdb.go` | All openGauss DDL; knows SQL, not the OSB API |
-| `pgx.go` | The pgx driver: real connections behind the DB interface |
+| `driver.go` | The database driver: gaussdb-go connections behind the DB interface |
 | `state.go` | Memory: bbolt records of what the broker created |
 | `config.go` | Environment variable names and their parsing |
 

@@ -41,7 +41,7 @@ func main() {
 	server := &http.Server{
 		Addr:              cfg.Host + ":" + strconv.Itoa(cfg.Port),
 		ReadHeaderTimeout: 10 * time.Second,
-		Handler:           newHandler(cfg, NewBroker(cfg, plans, NewAdmin(cfg, NewPgxDB(cfg)), store, logger), logger),
+		Handler:           newHandler(cfg, NewBroker(cfg, plans, NewAdmin(cfg, NewDB(cfg)), store, logger), logger),
 	}
 	go func() {
 		logger.Info("broker listening", "address", server.Addr, "storage_mode", cfg.StorageMode)
