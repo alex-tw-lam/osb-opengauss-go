@@ -1,0 +1,3 @@
+osb-opengauss*
+*.db
+.env
