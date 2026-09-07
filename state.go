@@ -1,78 +1,121 @@
-// state.go is the broker's memory: a bbolt file that records what was
-// created, so repeated and conflicting platform calls can be answered
-// according to the Open Service Broker rules (identical repeats succeed,
-// conflicts are rejected, unknown deletes report gone).
+// state.go is the broker's memory: instance and binding records kept in a
+// SQL database through GORM, so repeated and conflicting platform calls can
+// be answered according to the Open Service Broker rules (identical repeats
+// succeed, conflicts are rejected, unknown deletes report gone).
+//
+// The default is a SQLite file next to the binary. Setting STATE_DSN to a
+// postgres:// URL moves the state to any PostgreSQL-compatible server, and a
+// gaussdb:// URL moves it to an openGauss/GaussDB server (native sha256) -
+// including the very instance the broker manages, which then needs no local
+// state file at all.
 
 package main
 
 import (
-	"encoding/json"
+	"database/sql"
+	"errors"
 	"fmt"
-	"time"
+	"strings"
 
-	bolt "go.etcd.io/bbolt"
-)
-
-var (
-	instancesBucket = []byte("instances")
-	bindingsBucket  = []byte("bindings")
+	_ "github.com/HuaweiCloudDeveloper/gaussdb-go/stdlib" // registers the gaussdb database/sql driver
+	"github.com/glebarez/sqlite"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // InstanceRecord is what the broker remembers about one service instance.
 type InstanceRecord struct {
-	ServiceID string         `json:"service_id"`
-	PlanID    string         `json:"plan_id"`
-	Database  string         `json:"database"`
-	Params    InstanceParams `json:"params"`
+	InstanceID string `gorm:"primaryKey"`
+	ServiceID  string
+	PlanID     string
+	Database   string
+	Params     InstanceParams `gorm:"serializer:json"`
 }
 
 // BindingRecord is what the broker remembers about one binding. Credentials
 // are stored so an identical repeated bind returns the same password.
 type BindingRecord struct {
-	InstanceID  string            `json:"instance_id"`
-	Username    string            `json:"username"`
-	Params      BindingParams     `json:"params"`
-	Credentials map[string]string `json:"credentials"`
+	BindingID   string `gorm:"primaryKey"`
+	InstanceID  string `gorm:"index"`
+	Username    string
+	Params      BindingParams     `gorm:"serializer:json"`
+	Credentials map[string]string `gorm:"serializer:json"`
 }
 
-// Store wraps the bbolt file.
+// Store wraps the state database.
 type Store struct {
-	db *bolt.DB
+	db *gorm.DB
 }
 
-// OpenStore opens (creating if needed) the state file.
-func OpenStore(path string) (*Store, error) {
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+// OpenStore opens (creating if needed) the state database selected by the
+// configuration and creates its two tables.
+func OpenStore(cfg *Config) (*Store, error) {
+	dialector, err := stateDialector(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open state file %s: %w", path, err)
-	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [][]byte{instancesBucket, bindingsBucket} {
-			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
-				return fmt.Errorf("cannot create state bucket: %w", err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		_ = db.Close() // nothing left to do; the bucket creation error is the real failure
 		return nil, err
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		return nil, fmt.Errorf("cannot open state database: %w", err)
+	}
+	if err := db.AutoMigrate(&InstanceRecord{}, &BindingRecord{}); err != nil {
+		return nil, fmt.Errorf("cannot create state tables: %w", err)
 	}
 	return &Store{db: db}, nil
 }
 
-// Close releases the state file.
-func (s *Store) Close() error { return s.db.Close() }
+// stateDialector picks the GORM dialector for the configured state backend.
+func stateDialector(cfg *Config) (gorm.Dialector, error) {
+	switch {
+	case cfg.StateDSN == "":
+		return sqlite.Open(cfg.StatePath), nil
+	case strings.HasPrefix(cfg.StateDSN, "gaussdb://"):
+		// The gaussdb driver speaks openGauss sha256; the statements GORM
+		// emits are plain PostgreSQL, which openGauss accepts.
+		sqlDB, err := sql.Open("gaussdb", cfg.StateDSN)
+		if err != nil {
+			return nil, err
+		}
+		return postgres.New(postgres.Config{Conn: sqlDB}), nil
+	case strings.HasPrefix(cfg.StateDSN, "postgres://"), strings.HasPrefix(cfg.StateDSN, "postgresql://"):
+		return postgres.Open(cfg.StateDSN), nil
+	default:
+		return nil, fmt.Errorf("STATE_DSN must be a postgres:// or gaussdb:// URL, got %q", cfg.StateDSN)
+	}
+}
 
-// PutInstance records an instance.
+// Close releases the state database.
+func (s *Store) Close() error {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
+// PutInstance records an instance (insert or update).
 func (s *Store) PutInstance(instanceID string, record InstanceRecord) error {
-	return s.put(instancesBucket, instanceID, record)
+	record.InstanceID = instanceID
+	// Written as an explicit read-then-write: GORM's Save() would emit
+	// INSERT ... ON CONFLICT, which openGauss (PostgreSQL 9.2 based) does
+	// not support.
+	err := s.db.First(&InstanceRecord{}, "instance_id = ?", instanceID).Error
+	switch {
+	case err == nil:
+		return s.db.Model(&InstanceRecord{}).Where("instance_id = ?", instanceID).
+			Select("*").Updates(record).Error
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return s.db.Create(&record).Error
+	default:
+		return err
+	}
 }
 
 // GetInstance returns the record of an instance, or nil if unknown.
 func (s *Store) GetInstance(instanceID string) *InstanceRecord {
 	var record InstanceRecord
-	if !s.get(instancesBucket, instanceID, &record) {
+	if err := s.db.First(&record, "instance_id = ?", instanceID).Error; err != nil {
 		return nil
 	}
 	return &record
@@ -80,20 +123,29 @@ func (s *Store) GetInstance(instanceID string) *InstanceRecord {
 
 // DeleteInstance forgets an instance.
 func (s *Store) DeleteInstance(instanceID string) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(instancesBucket).Delete([]byte(instanceID))
-	})
+	return s.db.Delete(&InstanceRecord{}, "instance_id = ?", instanceID).Error
 }
 
 // PutBinding records a binding.
 func (s *Store) PutBinding(bindingID string, record BindingRecord) error {
-	return s.put(bindingsBucket, bindingID, record)
+	record.BindingID = bindingID
+	// Same read-then-write pattern as PutInstance: no ON CONFLICT upsert.
+	err := s.db.First(&BindingRecord{}, "binding_id = ?", bindingID).Error
+	switch {
+	case err == nil:
+		return s.db.Model(&BindingRecord{}).Where("binding_id = ?", bindingID).
+			Select("*").Updates(record).Error
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return s.db.Create(&record).Error
+	default:
+		return err
+	}
 }
 
 // GetBinding returns the record of a binding, or nil if unknown.
 func (s *Store) GetBinding(bindingID string) *BindingRecord {
 	var record BindingRecord
-	if !s.get(bindingsBucket, bindingID, &record) {
+	if err := s.db.First(&record, "binding_id = ?", bindingID).Error; err != nil {
 		return nil
 	}
 	return &record
@@ -101,45 +153,12 @@ func (s *Store) GetBinding(bindingID string) *BindingRecord {
 
 // DeleteBinding forgets a binding.
 func (s *Store) DeleteBinding(bindingID string) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bindingsBucket).Delete([]byte(bindingID))
-	})
+	return s.db.Delete(&BindingRecord{}, "binding_id = ?", bindingID).Error
 }
 
 // BindingsForInstance returns every binding that still exists on an instance.
 func (s *Store) BindingsForInstance(instanceID string) []BindingRecord {
 	var records []BindingRecord
-	_ = s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bindingsBucket).ForEach(func(_, value []byte) error {
-			var record BindingRecord
-			if json.Unmarshal(value, &record) == nil && record.InstanceID == instanceID {
-				records = append(records, record)
-			}
-			return nil
-		})
-	})
+	_ = s.db.Where("instance_id = ?", instanceID).Find(&records).Error
 	return records
-}
-
-func (s *Store) put(bucket []byte, key string, value any) error {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucket).Put([]byte(key), encoded)
-	})
-}
-
-func (s *Store) get(bucket []byte, key string, out any) bool {
-	found := false
-	_ = s.db.View(func(tx *bolt.Tx) error {
-		value := tx.Bucket(bucket).Get([]byte(key))
-		if value == nil {
-			return nil
-		}
-		found = json.Unmarshal(value, out) == nil
-		return nil
-	})
-	return found
 }

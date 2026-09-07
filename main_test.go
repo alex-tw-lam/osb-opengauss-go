@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,12 +27,13 @@ func withAuth(request *http.Request) *http.Request {
 // newTestServer builds the real HTTP handler on a fake database.
 func newTestServer(t *testing.T, db *fakeDB) http.Handler {
 	t.Helper()
-	store, err := OpenStore(t.TempDir() + "/state.db")
+	cfg := testConfig("role_quota")
+	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenStore(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	cfg := testConfig("role_quota")
 	broker := NewBroker(cfg, []Plan{devPlan}, NewAdmin(cfg, db), store, slog.Default())
 	return newHandler(cfg, broker, slog.Default())
 }

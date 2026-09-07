@@ -30,8 +30,10 @@ type Config struct {
 	BrokerUsername string
 	BrokerPassword string
 
-	// Local state file (bbolt) for idempotency and credentials.
+	// State storage: SQLite file by default, or STATE_DSN for a
+	// PostgreSQL-compatible (or gaussdb://) server.
 	StatePath string
+	StateDSN  string
 
 	// Prefix for every database / role / user the broker creates.
 	NamePrefix string
@@ -58,6 +60,7 @@ func LoadConfig() (*Config, error) {
 		BrokerUsername:   env("BROKER_USERNAME", "broker"),
 		BrokerPassword:   env("BROKER_PASSWORD", "broker-dev-password"),
 		StatePath:        env("STATE_DB_PATH", "osb-opengauss-state.db"),
+		StateDSN:         os.Getenv("STATE_DSN"),
 		NamePrefix:       env("GAUSSDB_NAME_PREFIX", "gdb"),
 		Host:             env("BROKER_HOST", "127.0.0.1"),
 		Port:             envInt("BROKER_PORT", 5000),

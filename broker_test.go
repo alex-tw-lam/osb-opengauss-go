@@ -16,7 +16,9 @@ const bid = "22222222-2222-2222-2222-222222222222"
 // newTestBroker builds a broker on a fake database and a real temp state file.
 func newTestBroker(t *testing.T, mode string) (*Broker, *fakeDB) {
 	t.Helper()
-	store, err := OpenStore(filepath.Join(t.TempDir(), "state.db"))
+	cfg := testConfig(mode)
+	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenStore(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +26,6 @@ func newTestBroker(t *testing.T, mode string) (*Broker, *fakeDB) {
 	db := newFakeDB()
 	plans := []Plan{devPlan, {ID: "gaussdb-pro", Name: "pro", Description: "pro",
 		StorageGB: 200, TempGB: 40, SpillGB: 40, MaxConnections: 500}}
-	cfg := testConfig(mode)
 	return NewBroker(cfg, plans, NewAdmin(cfg, db), store, slog.Default()), db
 }
 

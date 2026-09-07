@@ -35,7 +35,7 @@ func main() {
 		logger.Error("invalid plans file", "error", err)
 		os.Exit(1)
 	}
-	store, err := OpenStore(cfg.StatePath)
+	store, err := OpenStore(cfg)
 	if err != nil {
 		logger.Error("cannot open state file", "error", err)
 		os.Exit(1)

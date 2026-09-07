@@ -15,8 +15,8 @@ implement the same SQL and the same behaviour.
 
 Built with [brokerapi](https://code.cloudfoundry.org/brokerapi/v13) (the
 Cloud Foundry OSB library), [gaussdb-go](https://github.com/HuaweiCloudDeveloper/gaussdb-go)
-and [bbolt](https://go.etcd.io/bbolt). Requires Go **1.25.10** (pinned in
-go.mod). The SQL statements this broker issues were validated against a live
+and [GORM](https://gorm.io) (state storage). Requires Go **1.25.10** (pinned
+in go.mod). The SQL statements this broker issues were validated against a live
 openGauss 7.0.0-RC3 server and cross-checked against the GaussDB
 (centralized V2.0-10.x) SQL reference; see the Python repository's
 `docs/opengauss-research.md` for the full findings.
@@ -52,6 +52,17 @@ Optional provision parameters (validated against the plan): `compatibility`
 `tablespace` (enum of operator-curated tablespaces), `max_connections`,
 `storage_gb`, `temp_gb`, `spill_gb`. Bind parameters: `access_role`
 (`owner`/`readwrite`/`readonly`) and `max_connections`.
+
+## State storage
+
+The broker remembers its instances and bindings in two SQL tables through
+GORM. The default backend is a SQLite file (`STATE_DB_PATH`, pure-Go driver,
+no cgo). Setting `STATE_DSN` to a `postgres://` URL moves the state to any
+PostgreSQL-compatible server; a `gaussdb://` URL moves it to openGauss
+itself — including the instance the broker manages, using the same
+sha256-capable driver (the tables then live in the admin user's schema).
+Written portably: no upserts (`INSERT ... ON CONFLICT` is PostgreSQL 9.5+
+and openGauss is 9.2 based), so record writes are explicit read-then-write.
 
 ## Storage sizing modes
 
@@ -109,7 +120,8 @@ curl $AUTH -H "$H" -X PUT "localhost:5000/v2/service_instances/<uuid>/service_bi
 | `GAUSSDB_SSLMODE` | `disable` | libpq sslmode, propagated in binding URIs |
 | `GAUSSDB_CONNECT_TIMEOUT` | `10` | connection timeout (seconds) |
 | `BROKER_USERNAME` / `BROKER_PASSWORD` | `broker` / dev default | OSB basic auth |
-| `STATE_DB_PATH` | `./osb-opengauss-state.db` | bbolt state file |
+| `STATE_DB_PATH` | `./osb-opengauss-state.db` | SQLite state file (default backend) |
+| `STATE_DSN` | *(empty)* | move the state to a PostgreSQL-compatible server: a `postgres://` URL, or `gaussdb://` for openGauss with native sha256 |
 | `GAUSSDB_NAME_PREFIX` | `gdb` | prefix for created databases/roles/users |
 | `GAUSSDB_STORAGE_MODE` | `role_quota` | `role_quota` or `tablespace` |
 | `GAUSSDB_TABLESPACES` | *(empty)* | curated tablespace enum |
@@ -127,7 +139,7 @@ curl $AUTH -H "$H" -X PUT "localhost:5000/v2/service_instances/<uuid>/service_bi
 | `params.go` | Request rules: parameter validation and the matching JSON schemas |
 | `gaussdb.go` | All openGauss DDL; knows SQL, not the OSB API |
 | `driver.go` | The database driver: gaussdb-go connections behind the DB interface |
-| `state.go` | Memory: bbolt records of what the broker created |
+| `state.go` | Memory: GORM records of what the broker created (SQLite or PostgreSQL-compatible) |
 | `config.go` | Environment variable names and their parsing |
 
 ## Auditing the code
