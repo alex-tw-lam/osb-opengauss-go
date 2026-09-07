@@ -81,9 +81,8 @@ and openGauss is 9.2 based), so record writes are explicit read-then-write.
 ```bash
 go build -o osb-opengauss .
 
-export GAUSSDB_HOST=... GAUSSDB_PORT=5432
-export GAUSSDB_ADMIN_USER=... GAUSSDB_ADMIN_PASSWORD=...
-export BROKER_PASSWORD=$(openssl rand -hex 16)
+cp .env.example .env   # fill in; loaded at startup, real env vars win
+# or export the variables directly
 
 ./osb-opengauss        # listens on 127.0.0.1:5000 by default
 ```
@@ -111,6 +110,11 @@ curl $AUTH -H "$H" -X PUT "localhost:5000/v2/service_instances/<uuid>/service_bi
 ```
 
 ## Configuration
+
+A `.env` file in the working directory is loaded at startup if present
+(copy `.env.example` to start); variables already set in the real
+environment take precedence, and a malformed file fails loudly instead of
+running on half-applied settings.
 
 | Env var | Default | Meaning |
 |---|---|---|
