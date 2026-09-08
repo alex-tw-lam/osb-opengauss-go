@@ -188,7 +188,7 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 
 	names := NamesFor(instanceID, b.cfg.NamePrefix)
 	username := UserFor(bindingID, b.cfg.NamePrefix)
-	b.log.Info("binding user", "user", username, "database", names.Database, "role", spec.AccessRole)
+	b.log.Info("binding user", "user", username, "database", names.Database)
 	password, err := b.admin.Bind(ctx, names, username, spec, instance.Params)
 	if err != nil {
 		return domain.Binding{}, mapAdminError(err, apiresponses.ErrBindingAlreadyExists)

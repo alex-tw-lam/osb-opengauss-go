@@ -49,14 +49,14 @@ func TestBindingStateRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 	record := BindingRecord{
 		InstanceID: "i1", Username: "gdbu_b",
-		Params:      BindingParams{AccessRole: "readonly", MaxConnections: 7},
+		Params:      BindingParams{MaxConnections: 7},
 		Credentials: map[string]string{"uri": "gaussdb://x", "password": "p"},
 	}
 	if err := store.PutBinding("b1", record); err != nil {
 		t.Fatal(err)
 	}
 	got := store.GetBinding("b1")
-	if got == nil || got.Params.AccessRole != "readonly" || got.Credentials["uri"] != "gaussdb://x" {
+	if got == nil || got.Params.MaxConnections != 7 || got.Credentials["uri"] != "gaussdb://x" {
 		t.Fatalf("round trip wrong: %+v", got)
 	}
 	if list := store.BindingsForInstance("i1"); len(list) != 1 || list[0].Username != "gdbu_b" {

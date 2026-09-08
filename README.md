@@ -10,8 +10,8 @@ implement the same SQL and the same behaviour.
 |---|---|
 | Service offering `gaussdb` | one openGauss instance (admin connection via env vars) |
 | Service plan | a quota bundle: `PERM/TEMP/SPILL SPACE` + database `CONNECTION LIMIT` |
-| Service instance (tenant) | a **logical database** + `own`/`rw`/`ro` group roles, `REVOKE CONNECT FROM PUBLIC`, `ALTER DATABASE ... ENABLE PRIVATE OBJECT` |
-| Binding | a **login user account** (`CREATE USER`), member of one group role (access boundary), with its own `CONNECTION LIMIT` and the plan's space quotas |
+| Service instance (tenant) | a **logical database** + `own`/`rw` group roles, `REVOKE CONNECT FROM PUBLIC`, `ALTER DATABASE ... ENABLE PRIVATE OBJECT`; the public schema is the shared namespace |
+| Binding | a **read-write login user account** (`CREATE USER`) in the tenant's `rw` group with per-binding `ALTER DEFAULT PRIVILEGES` so every binding sees what the others create |
 
 Built with [brokerapi](https://code.cloudfoundry.org/brokerapi/v13) (the
 Cloud Foundry OSB library), [gaussdb-go](https://github.com/HuaweiCloudDeveloper/gaussdb-go)
@@ -50,8 +50,7 @@ optional `free` (defaults true).
 Optional provision parameters (validated against the plan): `compatibility`
 (`PG`/`A`/`B`/`C`), `encoding` (`UTF8`/`GBK`/`GB18030`/`Latin1`),
 `tablespace` (enum of operator-curated tablespaces), `max_connections`,
-`storage_gb`, `temp_gb`, `spill_gb`. Bind parameters: `access_role`
-(`owner`/`readwrite`/`readonly`) and `max_connections`.
+`storage_gb`, `temp_gb`, `spill_gb`. Bind parameter: `max_connections`.
 
 ## State storage
 
@@ -117,7 +116,7 @@ Configuration comes exclusively from environment variables.
 | Env var | Default | Meaning |
 |---|---|---|
 | `GAUSSDB_HOST` / `GAUSSDB_PORT` | `localhost` / `5432` | openGauss admin endpoint |
-| `GAUSSDB_ADMIN_USER` / `GAUSSDB_ADMIN_PASSWORD` | `gaussdb` / — | needs `CREATEDB`+`CREATEROLE` (sysadmin for tablespace mode) |
+| `GAUSSDB_ADMIN_USER` / `GAUSSDB_ADMIN_PASSWORD` | `gaussdb` / — | needs SYSADMIN (the public schema in a new database is owned by the cluster initial user, so only SYSADMIN can grant on it) |
 | `GAUSSDB_ADMIN_DB` | `postgres` | database for DDL |
 | `GAUSSDB_SSLMODE` | `disable` | libpq sslmode, propagated in binding URIs |
 | `GAUSSDB_CONNECT_TIMEOUT` | `10` | connection timeout (seconds) |

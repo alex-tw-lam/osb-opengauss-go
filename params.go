@@ -12,7 +12,6 @@ import (
 var (
 	compatibilities = []string{"PG", "A", "B", "C"} // openGauss DBCOMPATIBILITY
 	encodings       = []string{"UTF8", "GBK", "GB18030", "Latin1"}
-	accessRoles     = []string{"owner", "readwrite", "readonly"}
 )
 
 // InstanceParams is the fully resolved parameter set of one logical database.
@@ -28,9 +27,9 @@ type InstanceParams struct {
 }
 
 // BindingParams is the fully resolved parameter set of one binding user.
+// All bindings are read-write; there is no access_role.
 type BindingParams struct {
-	AccessRole     string `json:"access_role"`
-	MaxConnections int    `json:"max_connections"`
+	MaxConnections int `json:"max_connections"`
 }
 
 // RawParameters converts the raw JSON parameters of a request into a map.
@@ -96,13 +95,7 @@ func ResolveInstanceParams(plan Plan, params map[string]any, allowedTablespaces 
 
 // ResolveBindingParams merges user parameters over the plan defaults.
 func ResolveBindingParams(plan Plan, params map[string]any) (BindingParams, error) {
-	resolved := BindingParams{AccessRole: "readwrite", MaxConnections: plan.MaxConnections}
-	if v, ok := params["access_role"]; ok {
-		resolved.AccessRole = fmt.Sprint(v)
-		if !contains(accessRoles, resolved.AccessRole) {
-			return resolved, fmt.Errorf("'access_role' must be one of %v", accessRoles)
-		}
-	}
+	resolved := BindingParams{MaxConnections: plan.MaxConnections}
 	var err error
 	if resolved.MaxConnections, err = boundedInt(params, "max_connections", plan.MaxConnections, plan.MaxConnections); err != nil {
 		return resolved, err
@@ -195,10 +188,6 @@ func bindingSchema(plan Plan) map[string]any {
 		"$schema": "http://json-schema.org/draft-04/schema#",
 		"type":    "object",
 		"properties": map[string]any{
-			"access_role": map[string]any{
-				"type": "string", "enum": accessRoles, "default": "readwrite",
-				"description": "Access boundary of the binding user: owner (full DDL+DML), readwrite (DML on the tenant schema), readonly (SELECT only).",
-			},
 			"max_connections": map[string]any{
 				"type": "integer", "minimum": 1, "maximum": plan.MaxConnections, "default": plan.MaxConnections,
 				"description": "Per-user CONNECTION LIMIT.",

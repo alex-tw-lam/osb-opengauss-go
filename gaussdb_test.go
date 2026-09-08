@@ -76,6 +76,15 @@ func instanceParams() InstanceParams {
 	}
 }
 
+func containsStatement(statements []string, prefix string) bool {
+	for _, statement := range statements {
+		if strings.HasPrefix(statement, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestProvisionEmitsExpectedSQL(t *testing.T) {
 	db := newFakeDB()
 	admin := NewAdmin(testConfig("role_quota"), db)
@@ -92,6 +101,7 @@ func TestProvisionEmitsExpectedSQL(t *testing.T) {
 		`GRANT CONNECT ON DATABASE "gdb_11111111111111111111111111111111" TO "admin"`,
 		`REVOKE "gdb_11111111111111111111111111111111_own" FROM "admin"`,
 		`ALTER ROLE "gdb_11111111111111111111111111111111_own" PERM SPACE '5G'`,
+		`ALTER ROLE "gdb_11111111111111111111111111111111_rw" PERM SPACE '5G'`,
 	}
 	for _, statement := range want {
 		if !containsStatement(adminStmts, statement) {
@@ -99,24 +109,23 @@ func TestProvisionEmitsExpectedSQL(t *testing.T) {
 		}
 	}
 	tenantStmts := db.statements[names.Database]
-	for _, statement := range []string{
+	tenantWant := []string{
 		`ALTER DATABASE "gdb_11111111111111111111111111111111" ENABLE PRIVATE OBJECT`,
-		`CREATE SCHEMA "gdb_11111111111111111111111111111111_data" AUTHORIZATION "gdb_11111111111111111111111111111111_own"`,
-		`GRANT USAGE, CREATE ON SCHEMA "gdb_11111111111111111111111111111111_data" TO "gdb_11111111111111111111111111111111_rw"`,
-	} {
+		`GRANT USAGE, CREATE ON SCHEMA public TO "gdb_11111111111111111111111111111111_rw"`,
+	}
+	for _, statement := range tenantWant {
 		if !containsStatement(tenantStmts, statement) {
 			t.Errorf("missing tenant statement:\n want: %s", statement)
 		}
 	}
-}
-
-func containsStatement(statements []string, prefix string) bool {
-	for _, statement := range statements {
-		if strings.HasPrefix(statement, prefix) {
-			return true
-		}
+	// No dedicated tenant schema.
+	if strings.Contains(db.all(), "CREATE SCHEMA") {
+		t.Error("dedicated tenant schema must not be created")
 	}
-	return false
+	// No read-only role.
+	if strings.Contains(db.all(), "_ro") {
+		t.Error("read-only role must not exist")
+	}
 }
 
 func TestProvisionOrdering(t *testing.T) {
@@ -134,13 +143,13 @@ func TestProvisionOrdering(t *testing.T) {
 		}
 		return -1
 	}
+	// The tenant statements run as a separate batch between the two admin
+	// batches, so within the admin statements the relative order must be:
+	// membership grant, database creation, connection isolation, revoke.
 	grant := index(`GRANT "gdb_11111111111111111111111111111111_own" TO "admin"`)
 	createDB := index(`CREATE DATABASE "gdb_11111111111111111111111111111111"`)
 	isolate := index(`REVOKE CONNECT ON DATABASE "gdb_11111111111111111111111111111111" FROM PUBLIC`)
 	revoke := index(`REVOKE "gdb_11111111111111111111111111111111_own" FROM "admin"`)
-	// The tenant statements run as a separate batch between the two admin
-	// batches, so within the admin statements the relative order must be:
-	// membership grant, database creation, connection isolation, revoke.
 	if !(0 <= grant && grant < createDB && createDB < isolate && isolate < revoke) {
 		t.Errorf("unexpected ordering: grant=%d createDB=%d isolate=%d revoke=%d", grant, createDB, isolate, revoke)
 	}
@@ -177,23 +186,34 @@ func TestBindEmitsExpectedSQL(t *testing.T) {
 	db := newFakeDB()
 	admin := NewAdmin(testConfig("role_quota"), db)
 	password, err := admin.Bind(context.Background(), names, "gdbu_user1",
-		BindingParams{AccessRole: "readwrite", MaxConnections: 20}, instanceParams())
+		BindingParams{MaxConnections: 20}, instanceParams())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(password) != 28 {
 		t.Errorf("password length = %d, want 28", len(password))
 	}
-	stmts := db.statements["postgres"]
+	adminStmts := db.statements["postgres"]
 	want := []string{
 		`CREATE USER "gdbu_user1" LOGIN PASSWORD`,
 		`GRANT "gdb_11111111111111111111111111111111_rw" TO "gdbu_user1"`,
 		`ALTER ROLE "gdbu_user1" PERM SPACE '5G'`,
-		`ALTER ROLE "gdbu_user1" SET search_path = "gdb_11111111111111111111111111111111_data", public`,
+		`GRANT "gdbu_user1" TO "admin"`,
 	}
 	for _, statement := range want {
-		if !containsStatement(stmts, statement) {
-			t.Errorf("missing bind statement:\n want: %s", statement)
+		if !containsStatement(adminStmts, statement) {
+			t.Errorf("missing bind admin statement:\n want: %s", statement)
+		}
+	}
+	// Per-binding default privileges must run in the tenant database.
+	tenantStmts := db.statements[names.Database]
+	tenantWant := []string{
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "gdbu_user1" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "gdb_11111111111111111111111111111111_rw"`,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "gdbu_user1" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "gdb_11111111111111111111111111111111_rw"`,
+	}
+	for _, statement := range tenantWant {
+		if !containsStatement(tenantStmts, statement) {
+			t.Errorf("missing bind tenant statement:\n want: %s", statement)
 		}
 	}
 }

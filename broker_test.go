@@ -97,7 +97,7 @@ func TestBindUnbindDeprovision(t *testing.T) {
 		t.Fatal("identical re-bind must return the same credentials")
 	}
 	// Conflicting repeat fails.
-	if _, err := broker.Bind(ctx, iid, bid, bindDetails(map[string]any{"access_role": "readonly"}), false); err == nil {
+	if _, err := broker.Bind(ctx, iid, bid, bindDetails(map[string]any{"max_connections": 5}), false); err == nil {
 		t.Fatal("conflicting re-bind must fail")
 	}
 
@@ -155,7 +155,7 @@ func TestUpdateAndRetrieval(t *testing.T) {
 		t.Fatal("update of unknown instance must fail")
 	}
 
-	_, err = broker.Bind(ctx, iid, bid, bindDetails(map[string]any{"access_role": "readonly"}), false)
+	_, err = broker.Bind(ctx, iid, bid, bindDetails(nil), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestUpdateAndRetrieval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fetched.Parameters.(BindingParams).AccessRole != "readonly" {
+	if fetched.Parameters.(BindingParams).MaxConnections != 20 {
 		t.Fatalf("binding retrieval wrong: %+v", fetched.Parameters)
 	}
 }

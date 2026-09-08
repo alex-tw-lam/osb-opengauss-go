@@ -58,14 +58,11 @@ func TestResolveInstanceParamsTablespaceAllowlist(t *testing.T) {
 
 func TestResolveBindingParams(t *testing.T) {
 	spec, err := ResolveBindingParams(devPlan, map[string]any{})
-	if err != nil || spec.AccessRole != "readwrite" || spec.MaxConnections != 20 {
+	if err != nil || spec.MaxConnections != 20 {
 		t.Fatalf("defaults wrong: %v %+v", err, spec)
 	}
-	if _, err := ResolveBindingParams(devPlan, map[string]any{"access_role": "superuser"}); err == nil {
-		t.Error("invalid access_role must be rejected")
-	}
-	spec, err = ResolveBindingParams(devPlan, map[string]any{"access_role": "readonly", "max_connections": 5})
-	if err != nil || spec.AccessRole != "readonly" || spec.MaxConnections != 5 {
+	spec, err = ResolveBindingParams(devPlan, map[string]any{"max_connections": 5})
+	if err != nil || spec.MaxConnections != 5 {
 		t.Fatalf("override wrong: %v %+v", err, spec)
 	}
 }

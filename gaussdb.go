@@ -2,6 +2,23 @@
 // provision / bind / unbind / deprovision / update / healthcheck against
 // openGauss. Names are always identifier-quoted, literals always escaped.
 // The DB interface keeps this file testable without a database.
+//
+// Design (industry pattern, adapted for openGauss):
+//   - Instance = one logical database, owned by a NOLOGIN role, with the
+//     public schema as the single shared namespace (no tenant schema).
+//   - All bindings are read-write; there is no read-only role.
+//   - Cross-binding visibility is guaranteed by per-binding ALTER DEFAULT
+//     PRIVILEGES: every table/sequence a binding user creates is readable
+//     and writable by the tenant's rw group role, which every binding joins.
+//
+// openGauss specifics this file encodes:
+//   - The public schema in a new database is owned by the cluster's initial
+//     user, not the database owner, so granting on it requires SYSADMIN.
+//   - CREATE ROLE requires a password even for NOLOGIN roles.
+//   - ALTER DEFAULT PRIVILEGES FOR ROLE must run in the tenant database and
+//     requires membership in the role.
+//   - ALTER ROLE ... SET role (the Azure pattern) is not supported on
+//     PostgreSQL 9.2 based servers.
 
 package main
 
@@ -27,8 +44,6 @@ type Names struct {
 	Database   string
 	OwnerRole  string
 	RwRole     string
-	RoRole     string
-	Schema     string
 	Tablespace string
 }
 
@@ -47,8 +62,6 @@ func NamesFor(instanceID, prefix string) Names {
 		Database:   database,
 		OwnerRole:  database + "_own",
 		RwRole:     database + "_rw",
-		RoRole:     database + "_ro",
-		Schema:     database + "_data",
 		Tablespace: database + "_ts",
 	}
 }
@@ -78,9 +91,8 @@ func (a *Admin) HealthCheck(ctx context.Context) error {
 	return a.db.Ping(ctx)
 }
 
-// Provision creates the tenant: group roles, logical database, schema and
-// grants. Ownership rules require the broker admin to be a member of the
-// owner role while objects are created; access is locked down only at the end.
+// Provision creates the tenant: the logical database and its roles, with
+// the public schema as the shared namespace.
 func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams) error {
 	// Refuse to adopt objects that already exist (for example after the
 	// broker lost its state): report a clean conflict instead of DDL errors.
@@ -89,7 +101,7 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 	} else if exists {
 		return AlreadyExistsError{fmt.Sprintf("database %q already exists", names.Database)}
 	}
-	for _, role := range []string{names.OwnerRole, names.RwRole, names.RoRole} {
+	for _, role := range []string{names.OwnerRole, names.RwRole} {
 		if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", role); err != nil {
 			return err
 		} else if exists {
@@ -98,7 +110,7 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 	}
 
 	admin := a.adminDB()
-	own, rw, ro, db := quoteIdent(names.OwnerRole), quoteIdent(names.RwRole), quoteIdent(names.RoRole), quoteIdent(names.Database)
+	own, rw, db := quoteIdent(names.OwnerRole), quoteIdent(names.RwRole), quoteIdent(names.Database)
 
 	// openGauss requires a password on CREATE ROLE even for NOLOGIN roles;
 	// these are random and unusable because the roles can never log in.
@@ -110,7 +122,6 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		} else if exists {
 			return AlreadyExistsError{fmt.Sprintf("tablespace %q already exists", names.Tablespace)}
 		}
-		// A dedicated tablespace hard-caps the tenant's storage per node.
 		tablespaceStmt = []string{
 			fmt.Sprintf("CREATE TABLESPACE %s OWNER %s RELATIVE LOCATION %s MAXSIZE %s",
 				quoteIdent(names.Tablespace), own,
@@ -126,7 +137,6 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		fmt.Sprintf("CREATE ROLE %s NOLOGIN PASSWORD %s", own, quoteLiteral(randomPassword())),
 		fmt.Sprintf("GRANT %s TO %s", own, quoteIdent(a.cfg.DBUser)),
 		fmt.Sprintf("CREATE ROLE %s NOLOGIN PASSWORD %s", rw, quoteLiteral(randomPassword())),
-		fmt.Sprintf("CREATE ROLE %s NOLOGIN PASSWORD %s", ro, quoteLiteral(randomPassword())),
 	)
 	if err != nil {
 		return err
@@ -144,34 +154,31 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		return err
 	}
 
-	schema := quoteIdent(names.Schema)
+	// Tenant-side: the public schema is the shared namespace. openGauss owns
+	// it as the cluster initial user, so only SYSADMIN can grant on it.
 	err = a.db.Exec(ctx, names.Database,
 		// Object isolation: ordinary users only see objects they may access.
 		fmt.Sprintf("ALTER DATABASE %s ENABLE PRIVATE OBJECT", db),
-		fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", schema, own),
-		fmt.Sprintf("GRANT USAGE, CREATE ON SCHEMA %s TO %s", schema, rw),
-		fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s", schema, ro),
-		// Future objects created by the owner are readable per access role.
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT SELECT ON TABLES TO %s", own, schema, ro),
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", own, schema, rw),
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s", own, schema, ro),
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT USAGE, SELECT ON SEQUENCES TO %s", own, schema, rw),
+		// Grant the tenant's rw group full access to the shared namespace.
+		fmt.Sprintf("GRANT USAGE, CREATE ON SCHEMA public TO %s", rw),
+		// (No ADP for the owner role here: it is NOLOGIN and never creates
+		// objects directly. Per-binding ADP at bind time covers everything.)
 	)
 	if err != nil {
 		return err
 	}
 
 	// Lock connection isolation down last: PUBLIC loses CONNECT, the tenant
-	// access roles and the broker admin (for unbind housekeeping) keep it,
+	// access role and the broker admin (for unbind housekeeping) keep it,
 	// and the temporary owner-role membership is dropped.
 	final := []string{
 		fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", db),
 		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, rw),
-		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, ro),
 		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, quoteIdent(a.cfg.DBUser)),
 		fmt.Sprintf("REVOKE %s FROM %s", own, quoteIdent(a.cfg.DBUser)),
 	}
 	final = append(final, a.roleQuotaStatements(own, spec)...)
+	final = append(final, a.roleQuotaStatements(rw, spec)...)
 	return a.db.Exec(ctx, admin, final...)
 }
 
@@ -179,17 +186,19 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 // role_quota mode PERM SPACE caps permanent storage; in tablespace mode
 // MAXSIZE already does, so only temp/spill remain.
 func (a *Admin) roleQuotaStatements(role string, spec InstanceParams) []string {
-	statements := []string{}
-	if a.cfg.StorageMode == "role_quota" {
-		statements = append(statements, fmt.Sprintf("ALTER ROLE %s PERM SPACE %s", role, quoteLiteral(quotaString(spec.StorageGB))))
-	}
-	return append(statements,
+	statements := []string{
 		fmt.Sprintf("ALTER ROLE %s TEMP SPACE %s", role, quoteLiteral(quotaString(spec.TempGB))),
 		fmt.Sprintf("ALTER ROLE %s SPILL SPACE %s", role, quoteLiteral(quotaString(spec.SpillGB))),
-	)
+	}
+	if a.cfg.StorageMode == "role_quota" {
+		return append([]string{fmt.Sprintf("ALTER ROLE %s PERM SPACE %s", role, quoteLiteral(quotaString(spec.StorageGB)))}, statements...)
+	}
+	return statements
 }
 
-// Bind creates the login user of a binding and returns its password.
+// Bind creates the login user of a binding and returns its password. Every
+// binding is read-write: it joins the tenant's rw group, and its default
+// privileges make everything it creates visible to the other bindings.
 func (a *Admin) Bind(ctx context.Context, names Names, username string, spec BindingParams, instance InstanceParams) (string, error) {
 	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", username); err != nil {
 		return "", err
@@ -198,26 +207,41 @@ func (a *Admin) Bind(ctx context.Context, names Names, username string, spec Bin
 	}
 
 	password := randomPassword()
-	groups := map[string]string{
-		"owner":     names.OwnerRole,
-		"readwrite": names.RwRole,
-		"readonly":  names.RoRole,
-	}
 	user := quoteIdent(username)
-	// The same space quotas on the login user, so objects created directly
-	// by the user cannot bypass the tenant quota. search_path must be a name
-	// list, not one quoted literal, or the session ends up with a single
-	// bogus schema whose name contains a comma.
-	statements := append([]string{
+	rw := quoteIdent(names.RwRole)
+	adminUser := quoteIdent(a.cfg.DBUser)
+
+	// Create the user and join it to the tenant's rw group.
+	if err := a.db.Exec(ctx, a.adminDB(),
 		fmt.Sprintf("CREATE USER %s LOGIN PASSWORD %s CONNECTION LIMIT %d", user, quoteLiteral(password), spec.MaxConnections),
-		fmt.Sprintf("GRANT %s TO %s", quoteIdent(groups[spec.AccessRole]), user),
-	},
-		a.roleQuotaStatements(user, instance)...,
+		fmt.Sprintf("GRANT %s TO %s", rw, user),
+	); err != nil {
+		return "", err
+	}
+	// Quotas on the login user too, so objects it creates directly cannot
+	// bypass the tenant quota.
+	if err := a.db.Exec(ctx, a.adminDB(), a.roleQuotaStatements(user, instance)...); err != nil {
+		return "", err
+	}
+
+	// Per-binding default privileges in the tenant database: the broker must
+	// be a member of the user to set its default privileges, and the
+	// statements must run in the tenant database (not the admin one).
+	if err := a.db.Exec(ctx, a.adminDB(),
+		fmt.Sprintf("GRANT %s TO %s", user, adminUser),
+	); err != nil {
+		return "", err
+	}
+	err := a.db.Exec(ctx, names.Database,
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", user, rw),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s", user, rw),
 	)
-	statements = append(statements,
-		fmt.Sprintf("ALTER ROLE %s SET search_path = %s, public", user, quoteIdent(names.Schema)),
-	)
-	return password, a.db.Exec(ctx, a.adminDB(), statements...)
+	if err != nil {
+		return "", err
+	}
+	_ = a.db.Exec(ctx, a.adminDB(), fmt.Sprintf("REVOKE %s FROM %s", user, adminUser))
+
+	return password, nil
 }
 
 // Unbind removes the binding user and everything it owns.
@@ -248,7 +272,7 @@ func (a *Admin) Unbind(ctx context.Context, names Names, username string) error 
 func (a *Admin) Deprovision(ctx context.Context, names Names) error {
 	admin := a.adminDB()
 	own := quoteIdent(names.OwnerRole)
-	roles := []string{quoteIdent(names.RwRole), quoteIdent(names.RoRole), own}
+	roles := []string{quoteIdent(names.RwRole), own}
 	db := quoteIdent(names.Database)
 
 	// Only the owner (or its members) may drop the database and the
@@ -274,6 +298,7 @@ func (a *Admin) Deprovision(ctx context.Context, names Names) error {
 // Update changes the connection limit and the quotas of an instance.
 func (a *Admin) Update(ctx context.Context, names Names, spec InstanceParams) error {
 	own := quoteIdent(names.OwnerRole)
+	rw := quoteIdent(names.RwRole)
 	// ALTER DATABASE is owner-only (like DROP DATABASE), so take the owner
 	// membership for the duration of the update.
 	statements := []string{
@@ -289,6 +314,7 @@ func (a *Admin) Update(ctx context.Context, names Names, spec InstanceParams) er
 				quoteIdent(names.Tablespace), quoteLiteral(quotaString(spec.StorageGB))))
 	}
 	statements = append(statements, a.roleQuotaStatements(own, spec)...)
+	statements = append(statements, a.roleQuotaStatements(rw, spec)...)
 	statements = append(statements, fmt.Sprintf("REVOKE %s FROM %s", own, quoteIdent(a.cfg.DBUser)))
 	return a.db.Exec(ctx, a.adminDB(), statements...)
 }
