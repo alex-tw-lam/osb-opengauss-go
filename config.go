@@ -4,13 +4,10 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/joho/godotenv"
 )
 
 // Config holds every deployment-specific value. All fields come from
@@ -47,13 +44,9 @@ type Config struct {
 }
 
 // LoadConfig reads the environment and returns the effective configuration.
-// A .env file in the working directory is loaded first if present;
-// variables already set in the real environment take precedence over it.
-// It fails loudly on values that cannot be used at all.
+// Configuration comes exclusively from environment variables; it fails
+// loudly on values that cannot be used at all.
 func LoadConfig() (*Config, error) {
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("cannot parse .env file: %w", err)
-	}
 	cfg := &Config{
 		DBHost:           env("GAUSSDB_HOST", "localhost"),
 		DBPort:           envInt("GAUSSDB_PORT", 5432),
