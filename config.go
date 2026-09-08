@@ -42,9 +42,7 @@ type Config struct {
 	Port int
 }
 
-// LoadConfig reads the environment and returns the effective configuration.
-// Configuration comes exclusively from environment variables; it fails
-// loudly on values that cannot be used at all.
+// LoadConfig reads the environment and fails loudly on invalid values.
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		DBHost:           env("GAUSSDB_HOST", "localhost"),

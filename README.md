@@ -9,8 +9,8 @@ implement the same SQL and the same behaviour.
 | OSB concept | openGauss implementation |
 |---|---|
 | Service offering `gaussdb` | one openGauss instance (admin connection via env vars) |
-| Service plan | a quota bundle: `PERM/TEMP/SPILL SPACE` + database `CONNECTION LIMIT` |
-| Service instance (tenant) | a **logical database** owned by one NOLOGIN group role; `public` schema is the shared namespace |
+| Service plan | `storage_gb` (tablespace MAXSIZE) + `max_connections` (database CONNECTION LIMIT) |
+| Service instance (tenant) | a **logical database** + dedicated tablespace (MAXSIZE), owned by one NOLOGIN group role; `public` schema is the shared namespace |
 | Binding | a **read-write login user** (`CREATE USER`) in the tenant's group; per-binding `ALTER DEFAULT PRIVILEGES` makes everything each binding creates visible to all others |
 
 Built with [brokerapi](https://code.cloudfoundry.org/brokerapi/v13) (the
@@ -63,17 +63,6 @@ sha256-capable driver (the tables then live in the admin user's schema).
 Written portably: no upserts (`INSERT ... ON CONFLICT` is PostgreSQL 9.5+
 and openGauss is 9.2 based), so record writes are explicit read-then-write.
 
-## Storage sizing modes
-
-`GAUSSDB_STORAGE_MODE` selects how the storage quota is enforced:
-
-* **`role_quota` (default)** — `PERM SPACE` (+`TEMP SPACE`/`SPILL SPACE`) on
-  the owner role and every binding user. Needs workload management enabled
-  on the server for enforcement.
-* **`tablespace`** — every instance gets a dedicated tablespace
-  (`RELATIVE LOCATION 'broker/<ts>' MAXSIZE '<plan>G'`) set as the database
-  default: a hard per-node storage cap. The admin user must be sysadmin and
-  `storage_gb` updates map to `ALTER TABLESPACE ... RESIZE MAXSIZE`.
 
 ## Quick start
 
@@ -116,7 +105,7 @@ Configuration comes exclusively from environment variables.
 | Env var | Default | Meaning |
 |---|---|---|
 | `GAUSSDB_HOST` / `GAUSSDB_PORT` | `localhost` / `5432` | openGauss admin endpoint |
-| `GAUSSDB_ADMIN_USER` / `GAUSSDB_ADMIN_PASSWORD` | `gaussdb` / — | needs SYSADMIN (the public schema in a new database is owned by the cluster initial user, so only SYSADMIN can grant on it) |
+| `GAUSSDB_ADMIN_USER` / `GAUSSDB_ADMIN_PASSWORD` | `gaussdb` / — | needs SYSADMIN |
 | `GAUSSDB_ADMIN_DB` | `postgres` | database for DDL |
 | `GAUSSDB_SSLMODE` | `disable` | libpq sslmode, propagated in binding URIs |
 | `GAUSSDB_CONNECT_TIMEOUT` | `10` | connection timeout (seconds) |
@@ -125,7 +114,6 @@ Configuration comes exclusively from environment variables.
 | `STATE_DSN` | *(empty)* | move the state to a PostgreSQL-compatible server: a `postgres://` URL, or `gaussdb://` for openGauss with native sha256 |
 | `GAUSSDB_NAME_PREFIX` | `gdb` | prefix for created databases/roles/users |
 | `GAUSSDB_STORAGE_MODE` | `role_quota` | `role_quota` or `tablespace` |
-| `GAUSSDB_TABLESPACES` | *(empty)* | curated tablespace enum |
 | `GAUSSDB_PLANS_FILE` | `plans.toml` | plan catalog data file |
 | `GAUSSDB_TABLESPACE_LOCATION_PREFIX` | `broker` | single path segment under `pg_location/` |
 | `BROKER_HOST` / `BROKER_PORT` | `127.0.0.1` / `5000` | HTTP bind |

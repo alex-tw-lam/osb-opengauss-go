@@ -46,14 +46,6 @@ func (f *fakeDB) Exists(_ context.Context, table, _, name string) (bool, error) 
 
 func (f *fakeDB) Ping(context.Context) error { return f.pingErr }
 
-func (f *fakeDB) all() string {
-	var all []string
-	for _, statements := range f.statements {
-		all = append(all, statements...)
-	}
-	return strings.Join(all, "\n")
-}
-
 func testConfig() *Config {
 	return &Config{
 		DBHost: "db.example.org", DBPort: 6789, DBUser: "admin", DBPassword: "admin-secret",
@@ -108,9 +100,7 @@ func TestShortHashNaming(t *testing.T) {
 	if ns.Database != "gdb_myappname" {
 		t.Errorf("sanitized: got %s, want gdb_myappname", ns.Database)
 	}
-	// Empty custom name falls back to hash
-	ne := NamesFor("abc", "gdb", "")
-	if ne.Database == "gdb_" {
+	if n1.Database == "gdb_" {
 		t.Error("empty name must fall back to hash")
 	}
 }
@@ -171,10 +161,6 @@ func TestBind(t *testing.T) {
 	}
 	if !containsStatement(fdb.statements["postgres"], "GRANT "+grp+" TO \"gdbu_user1\"") {
 		t.Error("missing GRANT group TO user")
-	}
-	// No CONNECTION LIMIT on the user.
-	if strings.Contains(fdb.all(), "CONNECTION LIMIT") && strings.Contains(fdb.statements["postgres"][0], "CREATE USER") {
-		t.Log("note: CONNECTION LIMIT may appear in provision statements, not bind")
 	}
 }
 

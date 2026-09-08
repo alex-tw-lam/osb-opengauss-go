@@ -102,20 +102,14 @@ func (a *Admin) HealthCheck(ctx context.Context) error {
 
 // Provision creates the tenant: group role, tablespace, database.
 func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams) error {
-	if exists, err := a.db.Exists(ctx, "pg_database", "datname", names.Database); err != nil {
+	if err := a.ensureAbsent(ctx, "pg_database", "datname", names.Database); err != nil {
 		return err
-	} else if exists {
-		return AlreadyExistsError{fmt.Sprintf("database %q already exists", names.Database)}
 	}
-	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", names.GroupRole); err != nil {
+	if err := a.ensureAbsent(ctx, "pg_roles", "rolname", names.GroupRole); err != nil {
 		return err
-	} else if exists {
-		return AlreadyExistsError{fmt.Sprintf("role %q already exists", names.GroupRole)}
 	}
-	if exists, err := a.db.Exists(ctx, "pg_tablespace", "spcname", names.Tablespace); err != nil {
+	if err := a.ensureAbsent(ctx, "pg_tablespace", "spcname", names.Tablespace); err != nil {
 		return err
-	} else if exists {
-		return AlreadyExistsError{fmt.Sprintf("tablespace %q already exists", names.Tablespace)}
 	}
 
 	admin := a.adminDB()
@@ -160,10 +154,8 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 
 // Bind creates a read-write login user that joins the tenant's group role.
 func (a *Admin) Bind(ctx context.Context, names Names, username string) (string, error) {
-	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", username); err != nil {
+	if err := a.ensureAbsent(ctx, "pg_roles", "rolname", username); err != nil {
 		return "", err
-	} else if exists {
-		return "", AlreadyExistsError{fmt.Sprintf("user %q already exists", username)}
 	}
 
 	password := randomPassword()
@@ -233,6 +225,18 @@ type AlreadyExistsError struct{ Message string }
 func (e AlreadyExistsError) Error() string { return e.Message }
 
 func (a *Admin) adminDB() string { return a.cfg.DBAdminName }
+
+// ensureAbsent reports a clean conflict if the named object already exists.
+func (a *Admin) ensureAbsent(ctx context.Context, table, column, name string) error {
+	exists, err := a.db.Exists(ctx, table, column, name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return AlreadyExistsError{fmt.Sprintf("%s %q already exists", table, name)}
+	}
+	return nil
+}
 
 func quotaString(gb int) string { return fmt.Sprintf("%dG", gb) }
 

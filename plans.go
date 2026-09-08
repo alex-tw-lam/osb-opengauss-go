@@ -59,10 +59,7 @@ func LoadPlans(path string) ([]Plan, error) {
 func Catalog(plans []Plan) []domain.Service {
 	servicePlans := make([]domain.ServicePlan, 0, len(plans))
 	for _, plan := range plans {
-		free := true
-		if plan.Free != nil {
-			free = *plan.Free
-		}
+		free := plan.Free == nil || *plan.Free
 		servicePlans = append(servicePlans, domain.ServicePlan{
 			ID:          plan.ID,
 			Name:        plan.Name,

@@ -22,8 +22,6 @@ id = "p1"
 name = "one"
 description = "first"
 storage_gb = 5
-temp_gb = 1
-spill_gb = 1
 max_connections = 20
 
 [[plan]]
@@ -92,14 +90,5 @@ func TestCatalogExposesSchemas(t *testing.T) {
 	}
 	if _, ok := properties["tablespace"]; ok {
 		t.Error("tablespace property must not exist")
-	}
-}
-
-func TestCatalogHidesTablespaceWithoutAllowlist(t *testing.T) {
-	plans, _ := LoadPlans(writePlans(t, validPlans))
-	services := Catalog(plans)
-	properties := services[0].Plans[0].Schemas.Instance.Create.Parameters["properties"].(map[string]any)
-	if _, ok := properties["tablespace"]; ok {
-		t.Error("tablespace property must be hidden without an allowlist")
 	}
 }

@@ -6,66 +6,44 @@ import (
 	"testing"
 )
 
-func TestValidateParametersAcceptsValidInput(t *testing.T) {
+func TestValidateParameters(t *testing.T) {
 	schema := instanceSchema(devPlan)
-	valid := json.RawMessage(`{"compatibility":"A","encoding":"GBK","max_connections":10,"name":"orders"}`)
-	if err := ValidateParameters(schema, valid); err != nil {
-		t.Fatalf("valid input rejected: %v", err)
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		ok   bool
+	}{
+		{"valid full", json.RawMessage(`{"compatibility":"A","encoding":"GBK","max_connections":10,"name":"orders"}`), true},
+		{"valid empty object", json.RawMessage(`{}`), true},
+		{"nil parameters", nil, true},
+		{"null parameters", json.RawMessage(`null`), true},
+		{"string for integer", json.RawMessage(`{"max_connections":"twenty"}`), false},
+		{"out of range", json.RawMessage(`{"storage_gb":999}`), false},
+		{"invalid enum", json.RawMessage(`{"compatibility":"ORACLE"}`), false},
+		{"array not object", json.RawMessage(`[1,2,3]`), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateParameters(schema, tc.raw)
+			if tc.ok && err != nil {
+				t.Fatalf("rejected valid input: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("accepted invalid input")
+			}
+		})
 	}
 }
 
-func TestValidateParametersAcceptsEmpty(t *testing.T) {
-	schema := instanceSchema(devPlan)
-	if err := ValidateParameters(schema, nil); err != nil {
-		t.Fatalf("empty input rejected: %v", err)
-	}
-	if err := ValidateParameters(schema, json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("empty object rejected: %v", err)
-	}
-}
-
-func TestValidateParametersRejectsWrongType(t *testing.T) {
-	schema := instanceSchema(devPlan)
-	wrong := json.RawMessage(`{"max_connections":"twenty"}`)
-	err := ValidateParameters(schema, wrong)
-	if err == nil {
-		t.Fatal("string for integer must be rejected")
-	}
-	if !strings.Contains(err.Error(), "max_connections") {
+func TestValidateParametersFieldInError(t *testing.T) {
+	err := ValidateParameters(instanceSchema(devPlan), json.RawMessage(`{"max_connections":"x"}`))
+	if err == nil || !strings.Contains(err.Error(), "max_connections") {
 		t.Errorf("error should mention the field: %v", err)
 	}
 }
 
-func TestValidateParametersRejectsOutOfRange(t *testing.T) {
-	schema := instanceSchema(devPlan)
-	wrong := json.RawMessage(`{"storage_gb":999}`)
-	if err := ValidateParameters(schema, wrong); err == nil {
-		t.Fatal("out of range must be rejected")
-	}
-}
-
-func TestValidateParametersRejectsBadEnum(t *testing.T) {
-	schema := instanceSchema(devPlan)
-	wrong := json.RawMessage(`{"compatibility":"ORACLE"}`)
-	if err := ValidateParameters(schema, wrong); err == nil {
-		t.Fatal("invalid enum must be rejected")
-	}
-}
-
-func TestValidateParametersRejectsNonObject(t *testing.T) {
-	schema := instanceSchema(devPlan)
-	wrong := json.RawMessage(`[1,2,3]`)
-	if err := ValidateParameters(schema, wrong); err == nil {
-		t.Fatal("array must be rejected for an object schema")
-	}
-}
-
 func TestValidateBindingParameters(t *testing.T) {
-	schema := bindingSchema(devPlan)
-	if err := ValidateParameters(schema, json.RawMessage(`{"name":"reporting"}`)); err != nil {
+	if err := ValidateParameters(bindingSchema(devPlan), json.RawMessage(`{"name":"reporting"}`)); err != nil {
 		t.Fatalf("valid binding rejected: %v", err)
-	}
-	if err := ValidateParameters(schema, json.RawMessage(`{"max_connections":5}`)); err != nil {
-		t.Log("max_connections in binding is an unknown field; some validators reject it")
 	}
 }

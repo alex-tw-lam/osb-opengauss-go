@@ -6,7 +6,6 @@ import (
 )
 
 func TestLoadConfigDefaults(t *testing.T) {
-	t.Setenv("GAUSSDB_TABLESPACES", " ts_ssd , ts_hdd ,")
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -17,7 +16,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 func TestLoadConfigRejectsMultiSegmentPrefix(t *testing.T) {
-	t.Setenv("GAUSSDB_STORAGE_MODE", "role_quota")
 	t.Setenv("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "a/b")
 	_, err := LoadConfig()
 	if err == nil || !strings.Contains(err.Error(), "single path segment") {

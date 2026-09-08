@@ -26,20 +26,11 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	cfg, err := LoadConfig()
-	if err != nil {
-		logger.Error("invalid configuration", "error", err)
-		os.Exit(1)
-	}
+	must(logger, err, "invalid configuration")
 	plans, err := LoadPlans(cfg.PlansFile)
-	if err != nil {
-		logger.Error("invalid plans file", "error", err)
-		os.Exit(1)
-	}
+	must(logger, err, "invalid plans file")
 	store, err := OpenStore(cfg)
-	if err != nil {
-		logger.Error("cannot open state file", "error", err)
-		os.Exit(1)
-	}
+	must(logger, err, "cannot open state file")
 	defer store.Close()
 
 	server := &http.Server{
@@ -63,6 +54,13 @@ func main() {
 }
 
 // newHandler wires the brokerapi endpoints under / and the health probe.
+func must(logger *slog.Logger, err error, msg string) {
+	if err != nil {
+		logger.Error(msg, "error", err)
+		os.Exit(1)
+	}
+}
+
 func newHandler(cfg *Config, broker *Broker, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", brokerapi.New(broker, logger, brokerapi.BrokerCredentials{

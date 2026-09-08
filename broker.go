@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -58,10 +59,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, err
 	}
-	if err := ValidateParameters(instanceSchema(plan), details.RawParameters); err != nil {
-		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
-	}
-	params, err := RawParameters(details.RawParameters)
+	params, err := parseParams(instanceSchema(plan), details.RawParameters)
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
 	}
@@ -110,10 +108,7 @@ func (b *Broker) Update(ctx context.Context, instanceID string, details domain.U
 	if err != nil {
 		return domain.UpdateServiceSpec{}, err
 	}
-	if err := ValidateParameters(updatableSchema(plan), details.RawParameters); err != nil {
-		return domain.UpdateServiceSpec{}, invalidInput(err.Error())
-	}
-	params, err := RawParameters(details.RawParameters)
+	params, err := parseParams(updatableSchema(plan), details.RawParameters)
 	if err != nil {
 		return domain.UpdateServiceSpec{}, invalidInput(err.Error())
 	}
@@ -172,10 +167,7 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 	if err != nil {
 		return domain.Binding{}, err
 	}
-	if err := ValidateParameters(bindingSchema(plan), details.RawParameters); err != nil {
-		return domain.Binding{}, invalidInput(err.Error())
-	}
-	params, err := RawParameters(details.RawParameters)
+	params, err := parseParams(bindingSchema(plan), details.RawParameters)
 	if err != nil {
 		return domain.Binding{}, invalidInput(err.Error())
 	}
@@ -293,6 +285,14 @@ func mapAdminError(err error, conflict error) error {
 		return conflict
 	}
 	return err
+}
+
+// parseParams validates raw JSON against a schema, then decodes it.
+func parseParams(schema map[string]any, raw json.RawMessage) (map[string]any, error) {
+	if err := ValidateParameters(schema, raw); err != nil {
+		return nil, err
+	}
+	return RawParameters(raw)
 }
 
 // invalidInput wraps a validation message as an HTTP 400 response.
