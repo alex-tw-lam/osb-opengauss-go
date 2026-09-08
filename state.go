@@ -37,7 +37,7 @@ type InstanceRecord struct {
 // are stored so an identical repeated bind returns the same password.
 type BindingRecord struct {
 	BindingID   string `gorm:"primaryKey"`
-	InstanceID  string `gorm:"index"`
+	InstanceID  string
 	Username    string
 	Params      BindingParams     `gorm:"serializer:json"`
 	Credentials map[string]string `gorm:"serializer:json"`
@@ -50,6 +50,12 @@ type Store struct {
 
 // OpenStore opens (creating if needed) the state database selected by the
 // configuration and creates its two tables.
+//
+// The tables are created with plain CREATE TABLE IF NOT EXISTS statements
+// instead of GORM's AutoMigrate: the migrator's existence checks use
+// parameterized catalog queries that the gaussdb driver rejects on
+// PostgreSQL-9.2-based servers, which would stop a broker restart whenever
+// the tables already exist.
 func OpenStore(cfg *Config) (*Store, error) {
 	dialector, err := stateDialector(cfg)
 	if err != nil {
@@ -59,10 +65,30 @@ func OpenStore(cfg *Config) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot open state database: %w", err)
 	}
-	if err := db.AutoMigrate(&InstanceRecord{}, &BindingRecord{}); err != nil {
-		return nil, fmt.Errorf("cannot create state tables: %w", err)
+	for _, ddl := range stateSchema {
+		if err := db.Exec(ddl).Error; err != nil {
+			return nil, fmt.Errorf("cannot create state tables: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
+}
+
+// stateSchema is the whole state schema, in plain SQL.
+var stateSchema = []string{
+	`CREATE TABLE IF NOT EXISTS instance_records (
+		instance_id TEXT PRIMARY KEY,
+		service_id  TEXT NOT NULL,
+		plan_id     TEXT NOT NULL,
+		database    TEXT NOT NULL,
+		params      TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS binding_records (
+		binding_id   TEXT PRIMARY KEY,
+		instance_id  TEXT NOT NULL,
+		username     TEXT NOT NULL,
+		params       TEXT NOT NULL,
+		credentials  TEXT NOT NULL
+	)`,
 }
 
 // stateDialector picks the GORM dialector for the configured state backend.
