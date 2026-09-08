@@ -161,6 +161,10 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		fmt.Sprintf("ALTER DATABASE %s ENABLE PRIVATE OBJECT", db),
 		// Grant the tenant's rw group full access to the shared namespace.
 		fmt.Sprintf("GRANT USAGE, CREATE ON SCHEMA public TO %s", rw),
+		// Allow the rw group to create additional schemas: a binding user
+		// can then opt into a private namespace and grant access to it
+		// (or to the rw group) themselves - the broker does not manage it.
+		fmt.Sprintf("GRANT CREATE ON DATABASE %s TO %s", db, rw),
 		// (No ADP for the owner role here: it is NOLOGIN and never creates
 		// objects directly. Per-binding ADP at bind time covers everything.)
 	)
