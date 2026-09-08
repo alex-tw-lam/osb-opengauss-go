@@ -139,10 +139,16 @@ func (s *Store) PutInstance(instanceID string, record InstanceRecord) error {
 }
 
 // GetInstance returns the record of an instance, or nil if unknown.
+// A database error (as opposed to not-found) panics: the broker should
+// not silently treat a broken state database as "everything is gone".
 func (s *Store) GetInstance(instanceID string) *InstanceRecord {
 	var record InstanceRecord
-	if err := s.db.First(&record, "instance_id = ?", instanceID).Error; err != nil {
+	err := s.db.First(&record, "instance_id = ?", instanceID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
+	}
+	if err != nil {
+		panic(fmt.Sprintf("state database error: %v", err))
 	}
 	return &record
 }
@@ -171,8 +177,12 @@ func (s *Store) PutBinding(bindingID string, record BindingRecord) error {
 // GetBinding returns the record of a binding, or nil if unknown.
 func (s *Store) GetBinding(bindingID string) *BindingRecord {
 	var record BindingRecord
-	if err := s.db.First(&record, "binding_id = ?", bindingID).Error; err != nil {
+	err := s.db.First(&record, "binding_id = ?", bindingID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
+	}
+	if err != nil {
+		panic(fmt.Sprintf("state database error: %v", err))
 	}
 	return &record
 }
