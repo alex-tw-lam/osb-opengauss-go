@@ -10,8 +10,8 @@ implement the same SQL and the same behaviour.
 |---|---|
 | Service offering `gaussdb` | one openGauss instance (admin connection via env vars) |
 | Service plan | a quota bundle: `PERM/TEMP/SPILL SPACE` + database `CONNECTION LIMIT` |
-| Service instance (tenant) | a **logical database** + `own`/`rw` group roles, `REVOKE CONNECT FROM PUBLIC`, `ALTER DATABASE ... ENABLE PRIVATE OBJECT`; the public schema is the shared namespace |
-| Binding | a **read-write login user account** (`CREATE USER`) in the tenant's `rw` group with per-binding `ALTER DEFAULT PRIVILEGES` so every binding sees what the others create |
+| Service instance (tenant) | a **logical database** owned by one NOLOGIN group role; `public` schema is the shared namespace |
+| Binding | a **read-write login user** (`CREATE USER`) in the tenant's group; per-binding `ALTER DEFAULT PRIVILEGES` makes everything each binding creates visible to all others |
 
 Built with [brokerapi](https://code.cloudfoundry.org/brokerapi/v13) (the
 Cloud Foundry OSB library), [gaussdb-go](https://github.com/HuaweiCloudDeveloper/gaussdb-go)

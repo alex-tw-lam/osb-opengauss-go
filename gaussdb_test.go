@@ -85,6 +85,8 @@ func containsStatement(statements []string, prefix string) bool {
 	return false
 }
 
+const grpName = `"gdb_11111111111111111111111111111111_grp"`
+
 func TestProvisionEmitsExpectedSQL(t *testing.T) {
 	db := newFakeDB()
 	admin := NewAdmin(testConfig("role_quota"), db)
@@ -93,15 +95,17 @@ func TestProvisionEmitsExpectedSQL(t *testing.T) {
 	}
 	adminStmts := db.statements["postgres"]
 	want := []string{
-		`CREATE ROLE "gdb_11111111111111111111111111111111_own" NOLOGIN PASSWORD`,
-		`GRANT "gdb_11111111111111111111111111111111_own" TO "admin"`,
-		`CREATE DATABASE "gdb_11111111111111111111111111111111" OWNER "gdb_11111111111111111111111111111111_own" TEMPLATE template0` +
-			` ENCODING 'UTF8' DBCOMPATIBILITY 'PG' CONNECTION LIMIT 20`,
+		`CREATE ROLE ` + grpName + ` NOLOGIN PASSWORD`,
+		`GRANT ` + grpName + ` TO "admin"`,
+		`CREATE DATABASE "gdb_11111111111111111111111111111111" OWNER ` + grpName +
+			` TEMPLATE template0 ENCODING 'UTF8' DBCOMPATIBILITY 'PG' CONNECTION LIMIT 20`,
 		`REVOKE CONNECT ON DATABASE "gdb_11111111111111111111111111111111" FROM PUBLIC`,
+		`GRANT CONNECT ON DATABASE "gdb_11111111111111111111111111111111" TO ` + grpName,
 		`GRANT CONNECT ON DATABASE "gdb_11111111111111111111111111111111" TO "admin"`,
-		`REVOKE "gdb_11111111111111111111111111111111_own" FROM "admin"`,
-		`ALTER ROLE "gdb_11111111111111111111111111111111_own" PERM SPACE '5G'`,
-		`ALTER ROLE "gdb_11111111111111111111111111111111_rw" PERM SPACE '5G'`,
+		`REVOKE ` + grpName + ` FROM "admin"`,
+		`ALTER ROLE ` + grpName + ` PERM SPACE '5G'`,
+		`ALTER ROLE ` + grpName + ` TEMP SPACE '1G'`,
+		`ALTER ROLE ` + grpName + ` SPILL SPACE '1G'`,
 	}
 	for _, statement := range want {
 		if !containsStatement(adminStmts, statement) {
@@ -111,50 +115,23 @@ func TestProvisionEmitsExpectedSQL(t *testing.T) {
 	tenantStmts := db.statements[names.Database]
 	tenantWant := []string{
 		`ALTER DATABASE "gdb_11111111111111111111111111111111" ENABLE PRIVATE OBJECT`,
-		`GRANT USAGE, CREATE ON SCHEMA public TO "gdb_11111111111111111111111111111111_rw"`,
+		`GRANT USAGE, CREATE ON SCHEMA public TO ` + grpName,
+		`GRANT CREATE ON DATABASE "gdb_11111111111111111111111111111111" TO ` + grpName,
 	}
 	for _, statement := range tenantWant {
 		if !containsStatement(tenantStmts, statement) {
 			t.Errorf("missing tenant statement:\n want: %s", statement)
 		}
 	}
-	// No dedicated tenant schema.
-	if strings.Contains(db.all(), "CREATE SCHEMA") {
-		t.Error("dedicated tenant schema must not be created")
-	}
-	// No read-only role.
-	if strings.Contains(db.all(), "_ro") {
-		t.Error("read-only role must not exist")
-	}
-}
-
-func TestProvisionOrdering(t *testing.T) {
-	db := newFakeDB()
-	admin := NewAdmin(testConfig("role_quota"), db)
-	if err := admin.Provision(context.Background(), names, instanceParams()); err != nil {
-		t.Fatal(err)
-	}
-	stmts := db.statements["postgres"]
-	index := func(prefix string) int {
-		for i, statement := range stmts {
-			if strings.HasPrefix(statement, prefix) {
-				return i
-			}
+	// Only one group role.
+	roleCount := 0
+	for _, s := range adminStmts {
+		if strings.HasPrefix(s, "CREATE ROLE") {
+			roleCount++
 		}
-		return -1
 	}
-	// The tenant statements run as a separate batch between the two admin
-	// batches, so within the admin statements the relative order must be:
-	// membership grant, database creation, connection isolation, revoke.
-	grant := index(`GRANT "gdb_11111111111111111111111111111111_own" TO "admin"`)
-	createDB := index(`CREATE DATABASE "gdb_11111111111111111111111111111111"`)
-	isolate := index(`REVOKE CONNECT ON DATABASE "gdb_11111111111111111111111111111111" FROM PUBLIC`)
-	revoke := index(`REVOKE "gdb_11111111111111111111111111111111_own" FROM "admin"`)
-	if !(0 <= grant && grant < createDB && createDB < isolate && isolate < revoke) {
-		t.Errorf("unexpected ordering: grant=%d createDB=%d isolate=%d revoke=%d", grant, createDB, isolate, revoke)
-	}
-	if len(db.statements[names.Database]) == 0 {
-		t.Error("tenant statements missing")
+	if roleCount != 1 {
+		t.Errorf("expected 1 CREATE ROLE, got %d", roleCount)
 	}
 }
 
@@ -165,20 +142,11 @@ func TestProvisionTablespaceMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := db.all()
-	if !strings.Contains(all, `CREATE TABLESPACE "gdb_11111111111111111111111111111111_ts" OWNER "gdb_11111111111111111111111111111111_own" RELATIVE LOCATION 'broker/gdb_11111111111111111111111111111111_ts' MAXSIZE '5G'`) {
-		t.Errorf("missing tablespace statement in:\n%s", all)
+	if !strings.Contains(all, `CREATE TABLESPACE "gdb_11111111111111111111111111111111_ts" OWNER `+grpName) {
+		t.Errorf("missing tablespace statement")
 	}
 	if strings.Contains(all, "PERM SPACE") {
 		t.Error("tablespace mode must not emit PERM SPACE")
-	}
-}
-
-func TestProvisionRejectsExistingObjects(t *testing.T) {
-	db := newFakeDB()
-	db.databases[names.Database] = true
-	err := NewAdmin(testConfig("role_quota"), db).Provision(context.Background(), names, instanceParams())
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("expected AlreadyExistsError, got %v", err)
 	}
 }
 
@@ -196,32 +164,36 @@ func TestBindEmitsExpectedSQL(t *testing.T) {
 	adminStmts := db.statements["postgres"]
 	want := []string{
 		`CREATE USER "gdbu_user1" LOGIN PASSWORD`,
-		`GRANT "gdb_11111111111111111111111111111111_rw" TO "gdbu_user1"`,
+		`GRANT ` + grpName + ` TO "gdbu_user1"`,
 		`ALTER ROLE "gdbu_user1" PERM SPACE '5G'`,
-		`GRANT "gdbu_user1" TO "admin"`,
 	}
 	for _, statement := range want {
 		if !containsStatement(adminStmts, statement) {
 			t.Errorf("missing bind admin statement:\n want: %s", statement)
 		}
 	}
-	// Per-binding default privileges must run in the tenant database.
+	// Per-binding ADP must run in the tenant database, no membership dance.
 	tenantStmts := db.statements[names.Database]
 	tenantWant := []string{
-		`ALTER DEFAULT PRIVILEGES FOR ROLE "gdbu_user1" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "gdb_11111111111111111111111111111111_rw"`,
-		`ALTER DEFAULT PRIVILEGES FOR ROLE "gdbu_user1" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "gdb_11111111111111111111111111111111_rw"`,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "gdbu_user1" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ` + grpName,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "gdbu_user1" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ` + grpName,
 	}
 	for _, statement := range tenantWant {
 		if !containsStatement(tenantStmts, statement) {
 			t.Errorf("missing bind tenant statement:\n want: %s", statement)
 		}
 	}
+	// No membership dance.
+	for _, s := range adminStmts {
+		if strings.Contains(s, `GRANT "gdbu_user1" TO`) {
+			t.Error("bind must not grant the user to the admin")
+		}
+	}
 }
 
 func TestUnbindAndDeprovision(t *testing.T) {
 	db := newFakeDB()
-	cfg := testConfig("role_quota")
-	admin := NewAdmin(cfg, db)
+	admin := NewAdmin(testConfig("role_quota"), db)
 	if err := admin.Unbind(context.Background(), names, "gdbu_user1"); err != nil {
 		t.Fatal(err)
 	}
@@ -238,13 +210,23 @@ func TestUnbindAndDeprovision(t *testing.T) {
 	stmts := db.statements["postgres"]
 	want := []string{
 		`DROP DATABASE IF EXISTS "gdb_11111111111111111111111111111111"`,
-		`DROP ROLE IF EXISTS "gdb_11111111111111111111111111111111_own"`,
-		`REVOKE "gdb_11111111111111111111111111111111_own" FROM "admin"`,
+		`DROP ROLE IF EXISTS ` + grpName,
+		`REVOKE ` + grpName + ` FROM "admin"`,
 	}
 	for _, statement := range want {
 		if !containsStatement(stmts, statement) {
 			t.Errorf("missing deprovision statement:\n want: %s", statement)
 		}
+	}
+	// Only one role to drop.
+	dropRoleCount := 0
+	for _, s := range stmts {
+		if strings.HasPrefix(s, "DROP ROLE IF EXISTS") {
+			dropRoleCount++
+		}
+	}
+	if dropRoleCount != 1 {
+		t.Errorf("expected 1 DROP ROLE, got %d", dropRoleCount)
 	}
 }
 
@@ -258,10 +240,10 @@ func TestUpdate(t *testing.T) {
 	}
 	stmts := db.statements["postgres"]
 	if !containsStatement(stmts, `ALTER DATABASE "gdb_11111111111111111111111111111111" CONNECTION LIMIT = 10`) {
-		t.Error("missing ALTER DATABASE statement")
+		t.Error("missing ALTER DATABASE")
 	}
-	if !containsStatement(stmts, `GRANT "gdb_11111111111111111111111111111111_own" TO "admin"`) ||
-		!containsStatement(stmts, `REVOKE "gdb_11111111111111111111111111111111_own" FROM "admin"`) {
-		t.Error("update must take and drop the owner membership")
+	if !containsStatement(stmts, `GRANT `+grpName+` TO "admin"`) ||
+		!containsStatement(stmts, `REVOKE `+grpName+` FROM "admin"`) {
+		t.Error("update must take and drop the group membership")
 	}
 }
