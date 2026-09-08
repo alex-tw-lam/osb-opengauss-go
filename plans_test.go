@@ -78,28 +78,26 @@ func TestLoadPlansNonPositiveQuota(t *testing.T) {
 }
 
 func TestCatalogExposesSchemas(t *testing.T) {
-	plans, err := LoadPlans(writePlans(t, validPlans))
-	if err != nil {
-		t.Fatal(err)
-	}
-	services := Catalog(plans, []string{"ts_ssd", "ts_hdd"})
+	plans, _ := LoadPlans(writePlans(t, validPlans))
+	services := Catalog(plans)
 	if len(services) != 1 || len(services[0].Plans) != 2 {
 		t.Fatalf("unexpected catalog: %+v", services)
 	}
-	properties := services[0].Plans[0].Schemas.Instance.Create.Parameters["properties"].(map[string]any)
-	tablespace, _ := properties["tablespace"].(map[string]any)
-	if tablespace == nil {
-		t.Fatal("tablespace property missing")
+	if !services[0].PlanUpdatable {
+		t.Error("plan_updateable must be true")
 	}
-	enum, _ := tablespace["enum"].([]string)
-	if len(enum) != 2 || enum[0] != "ts_ssd" {
-		t.Errorf("tablespace enum wrong: %v", enum)
+	properties := services[0].Plans[0].Schemas.Instance.Create.Parameters["properties"].(map[string]any)
+	if properties["name"] == nil {
+		t.Error("name property missing from instance schema")
+	}
+	if _, ok := properties["tablespace"]; ok {
+		t.Error("tablespace property must not exist")
 	}
 }
 
 func TestCatalogHidesTablespaceWithoutAllowlist(t *testing.T) {
 	plans, _ := LoadPlans(writePlans(t, validPlans))
-	services := Catalog(plans, nil)
+	services := Catalog(plans)
 	properties := services[0].Plans[0].Schemas.Instance.Create.Parameters["properties"].(map[string]any)
 	if _, ok := properties["tablespace"]; ok {
 		t.Error("tablespace property must be hidden without an allowlist")

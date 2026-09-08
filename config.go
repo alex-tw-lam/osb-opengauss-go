@@ -68,11 +68,6 @@ func LoadConfig() (*Config, error) {
 	if strings.Contains(cfg.TablespacePrefix, "/") {
 		return nil, fmt.Errorf("GAUSSDB_TABLESPACE_LOCATION_PREFIX must be a single path segment")
 	}
-	for _, name := range strings.Split(os.Getenv("GAUSSDB_TABLESPACES"), ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			cfg.Tablespaces = append(cfg.Tablespaces, name)
-		}
-	}
 	return cfg, nil
 }
 

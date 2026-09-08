@@ -46,7 +46,7 @@ func (b *Broker) plan(planID string) (Plan, error) {
 
 // Services returns the /v2/catalog payload.
 func (b *Broker) Services(context.Context) ([]domain.Service, error) {
-	return Catalog(b.plans, b.cfg.Tablespaces), nil
+	return Catalog(b.plans), nil
 }
 
 // Provision creates a logical database (tenant).
@@ -62,7 +62,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
 	}
-	spec, err := ResolveInstanceParams(plan, params, b.cfg.Tablespaces)
+	spec, err := ResolveInstanceParams(plan, params)
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
 	}
@@ -73,7 +73,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 		return domain.ProvisionedServiceSpec{}, apiresponses.ErrInstanceAlreadyExists
 	}
 
-	names := NamesFor(instanceID, b.cfg.NamePrefix)
+	names := NamesFor(instanceID, b.cfg.NamePrefix, spec.Name)
 	b.log.Info("provisioning logical database", "database", names.Database, "plan", plan.ID)
 	if err := b.admin.Provision(ctx, names, spec); err != nil {
 		return domain.ProvisionedServiceSpec{}, mapAdminError(err, apiresponses.ErrInstanceAlreadyExists)
@@ -111,12 +111,12 @@ func (b *Broker) Update(ctx context.Context, instanceID string, details domain.U
 	if err != nil {
 		return domain.UpdateServiceSpec{}, invalidInput(err.Error())
 	}
-	spec, err := ResolveInstanceParams(plan, params, b.cfg.Tablespaces)
+	spec, err := ResolveInstanceParams(plan, params)
 	if err != nil {
 		return domain.UpdateServiceSpec{}, invalidInput(err.Error())
 	}
 
-	names := NamesFor(instanceID, b.cfg.NamePrefix)
+	names := NamesFor(instanceID, b.cfg.NamePrefix, spec.Name)
 	b.log.Info("updating logical database", "database", names.Database)
 	if err := b.admin.Update(ctx, names, spec); err != nil {
 		return domain.UpdateServiceSpec{}, err
@@ -133,7 +133,8 @@ func (b *Broker) Deprovision(ctx context.Context, instanceID string, details dom
 	if details.ServiceID != serviceID {
 		return domain.DeprovisionServiceSpec{}, invalidInput(fmt.Sprintf("unknown service_id %q", details.ServiceID))
 	}
-	if b.store.GetInstance(instanceID) == nil {
+	instance := b.store.GetInstance(instanceID)
+	if instance == nil {
 		return domain.DeprovisionServiceSpec{}, apiresponses.ErrInstanceNotFound
 	}
 	if len(b.store.BindingsForInstance(instanceID)) > 0 {
@@ -141,7 +142,7 @@ func (b *Broker) Deprovision(ctx context.Context, instanceID string, details dom
 			"service instance still has bindings; unbind them before deprovisioning")
 	}
 
-	names := NamesFor(instanceID, b.cfg.NamePrefix)
+	names := NamesFor(instanceID, b.cfg.NamePrefix, instance.Params.Name)
 	b.log.Info("deprovisioning logical database", "database", names.Database)
 	if err := b.admin.Deprovision(ctx, names); err != nil {
 		return domain.DeprovisionServiceSpec{}, err
@@ -181,10 +182,10 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 		return domain.Binding{}, apiresponses.ErrBindingAlreadyExists
 	}
 
-	names := NamesFor(instanceID, b.cfg.NamePrefix)
-	username := UserFor(bindingID, b.cfg.NamePrefix)
+	names := NamesFor(instanceID, b.cfg.NamePrefix, spec.Name)
+	username := UserFor(bindingID, b.cfg.NamePrefix, spec.Name)
 	b.log.Info("binding user", "user", username, "database", names.Database)
-	password, err := b.admin.Bind(ctx, names, username, spec)
+	password, err := b.admin.Bind(ctx, names, username)
 	if err != nil {
 		return domain.Binding{}, mapAdminError(err, apiresponses.ErrBindingAlreadyExists)
 	}
@@ -208,7 +209,7 @@ func (b *Broker) Unbind(ctx context.Context, instanceID, bindingID string, detai
 		return domain.UnbindSpec{}, apiresponses.ErrBindingNotFound
 	}
 
-	names := NamesFor(instanceID, b.cfg.NamePrefix)
+	names := NamesFor(instanceID, b.cfg.NamePrefix, instance.Params.Name)
 	b.log.Info("unbinding user", "user", binding.Username, "database", names.Database)
 	if err := b.admin.Unbind(ctx, names, binding.Username); err != nil {
 		return domain.UnbindSpec{}, err

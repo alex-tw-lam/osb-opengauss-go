@@ -17,9 +17,9 @@ var (
 // InstanceParams is the fully resolved parameter set of one logical database.
 type InstanceParams struct {
 	PlanID         string `json:"plan_id"`
+	Name           string `json:"name"`
 	Compatibility  string `json:"compatibility"`
 	Encoding       string `json:"encoding"`
-	Tablespace     string `json:"tablespace"`
 	MaxConnections int    `json:"max_connections"`
 	StorageGB      int    `json:"storage_gb"`
 }
@@ -27,7 +27,7 @@ type InstanceParams struct {
 // BindingParams is the fully resolved parameter set of one binding user.
 // All bindings are read-write; there is no access_role.
 type BindingParams struct {
-	MaxConnections int `json:"max_connections"`
+	Name string `json:"name"`
 }
 
 // RawParameters converts the raw JSON parameters of a request into a map.
@@ -44,7 +44,7 @@ func RawParameters(raw json.RawMessage) (map[string]any, error) {
 
 // ResolveInstanceParams merges user parameters over the plan defaults.
 // Parameters may tighten a plan but never exceed it.
-func ResolveInstanceParams(plan Plan, params map[string]any, allowedTablespaces []string) (InstanceParams, error) {
+func ResolveInstanceParams(plan Plan, params map[string]any) (InstanceParams, error) {
 	resolved := InstanceParams{
 		PlanID:         plan.ID,
 		Compatibility:  "PG",
@@ -64,14 +64,8 @@ func ResolveInstanceParams(plan Plan, params map[string]any, allowedTablespaces 
 			return resolved, fmt.Errorf("'encoding' must be one of %v", encodings)
 		}
 	}
-	if v, ok := params["tablespace"]; ok {
-		resolved.Tablespace = fmt.Sprint(v)
-		switch {
-		case len(allowedTablespaces) == 0:
-			return resolved, fmt.Errorf("'tablespace' is not offered by this deployment")
-		case !contains(allowedTablespaces, resolved.Tablespace):
-			return resolved, fmt.Errorf("'tablespace' must be one of %v", allowedTablespaces)
-		}
+	if v, ok := params["name"]; ok {
+		resolved.Name = fmt.Sprint(v)
 	}
 	var err error
 	if resolved.MaxConnections, err = boundedInt(params, "max_connections", plan.MaxConnections, plan.MaxConnections); err != nil {
@@ -85,10 +79,9 @@ func ResolveInstanceParams(plan Plan, params map[string]any, allowedTablespaces 
 
 // ResolveBindingParams merges user parameters over the plan defaults.
 func ResolveBindingParams(plan Plan, params map[string]any) (BindingParams, error) {
-	resolved := BindingParams{MaxConnections: plan.MaxConnections}
-	var err error
-	if resolved.MaxConnections, err = boundedInt(params, "max_connections", plan.MaxConnections, plan.MaxConnections); err != nil {
-		return resolved, err
+	resolved := BindingParams{}
+	if v, ok := params["name"]; ok {
+		resolved.Name = fmt.Sprint(v)
 	}
 	return resolved, nil
 }
@@ -123,7 +116,7 @@ func contains(list []string, value string) bool {
 }
 
 // instanceSchema is the JSON schema for instance create parameters.
-func instanceSchema(plan Plan, tablespaces []string) map[string]any {
+func instanceSchema(plan Plan) map[string]any {
 	properties := map[string]any{
 		"compatibility": map[string]any{
 			"type": "string", "enum": compatibilities, "default": "PG",
@@ -139,15 +132,12 @@ func instanceSchema(plan Plan, tablespaces []string) map[string]any {
 		},
 		"storage_gb": map[string]any{
 			"type": "integer", "minimum": 1, "maximum": plan.StorageGB, "default": plan.StorageGB,
-			"description": "Storage quota of the logical database.",
+			"description": "Storage quota of the logical database (tablespace MAXSIZE).",
 		},
-	}
-	// Only curated tablespaces are offered, as an enum.
-	if len(tablespaces) > 0 {
-		properties["tablespace"] = map[string]any{
-			"type": "string", "enum": tablespaces,
-			"description": "Existing tablespace for the logical database (default pg_default).",
-		}
+		"name": map[string]any{
+			"type":        "string",
+			"description": "Human-readable name for the database.",
+		},
 	}
 	return map[string]any{"$schema": "http://json-schema.org/draft-04/schema#", "type": "object", "properties": properties}
 }
@@ -155,7 +145,7 @@ func instanceSchema(plan Plan, tablespaces []string) map[string]any {
 // updatableSchema is the JSON schema for instance update parameters; only
 // these parameters may change after creation.
 func updatableSchema(plan Plan) map[string]any {
-	full := instanceSchema(plan, nil)
+	full := instanceSchema(plan)
 	properties := full["properties"].(map[string]any)
 	updatable := map[string]any{}
 	for _, key := range []string{"max_connections", "storage_gb"} {
@@ -170,9 +160,9 @@ func bindingSchema(plan Plan) map[string]any {
 		"$schema": "http://json-schema.org/draft-04/schema#",
 		"type":    "object",
 		"properties": map[string]any{
-			"max_connections": map[string]any{
-				"type": "integer", "minimum": 1, "maximum": plan.MaxConnections, "default": plan.MaxConnections,
-				"description": "Per-user CONNECTION LIMIT.",
+			"name": map[string]any{
+				"type":        "string",
+				"description": "Human-readable name for the binding user.",
 			},
 		},
 	}

@@ -56,7 +56,7 @@ func LoadPlans(path string) ([]Plan, error) {
 }
 
 // Catalog assembles the /v2/catalog payload for the loaded plans.
-func Catalog(plans []Plan, tablespaces []string) []domain.Service {
+func Catalog(plans []Plan) []domain.Service {
 	servicePlans := make([]domain.ServicePlan, 0, len(plans))
 	for _, plan := range plans {
 		free := true
@@ -77,7 +77,7 @@ func Catalog(plans []Plan, tablespaces []string) []domain.Service {
 			},
 			Schemas: &domain.ServiceSchemas{
 				Instance: domain.ServiceInstanceSchema{
-					Create: domain.Schema{Parameters: instanceSchema(plan, tablespaces)},
+					Create: domain.Schema{Parameters: instanceSchema(plan)},
 					Update: domain.Schema{Parameters: updatableSchema(plan)},
 				},
 				Binding: domain.ServiceBindingSchema{
@@ -94,7 +94,7 @@ func Catalog(plans []Plan, tablespaces []string) []domain.Service {
 		InstancesRetrievable: true,
 		BindingsRetrievable:  true,
 		Tags:                 []string{"gaussdb", "opengauss", "postgresql", "database", "sql"},
-		PlanUpdatable:        false,
+		PlanUpdatable:        true,
 		Plans:                servicePlans,
 		Metadata: &domain.ServiceMetadata{
 			DisplayName:         "GaussDB (openGauss)",

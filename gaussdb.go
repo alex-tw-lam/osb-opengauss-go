@@ -1,35 +1,27 @@
-// gaussdb.go is the only file that knows SQL. It executes the DDL behind
-// provision / bind / unbind / deprovision / update / healthcheck against
-// openGauss. Names are always identifier-quoted, literals always escaped.
-// The DB interface keeps this file testable without a database.
+// gaussdb.go is the only file that knows SQL.
 //
-// The model is the simplest native openGauss layout. Each tenant gets:
+// The model: each tenant gets one NOLOGIN group role, one tablespace
+// (MAXSIZE = storage cap), and one logical database (CONNECTION LIMIT).
+// Binding users join the group; the public schema is the shared namespace.
 //
-//	One NOLOGIN group role (gdb_<id>_grp) that owns:
-//	  - the logical database (gdb_<id>) with CONNECTION LIMIT
-//	  - a dedicated tablespace (gdb_<id>_ts) with MAXSIZE
-//
-//	Storage is capped by the tablespace MAXSIZE (storage layer, always
-//	enforced). Connections are capped by the database CONNECTION LIMIT.
-//	There are no role-level space quotas.
-//
-//	Binding users are LOGIN users who join the group role. The public
-//	schema is the shared namespace; per-binding ALTER DEFAULT PRIVILEGES
-//	make everything each user creates visible to the whole group.
+// Naming: database and user names derive from the platform's instance /
+// binding UUID via a 12-character SHA-256 prefix (short and deterministic).
+// If the user supplies a name parameter, that name is used instead.
 
 package main
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"regexp"
 	"strings"
 )
 
-// DB is the narrow database surface the broker needs. database is the
-// database name to run on; "" means the admin database.
+// DB is the narrow database surface the broker needs.
 type DB interface {
 	Exec(ctx context.Context, database string, statements ...string) error
 	Exists(ctx context.Context, table, column, name string) (bool, error)
@@ -43,31 +35,53 @@ type Names struct {
 	Tablespace string
 }
 
-const maxIdentifier = 63 // openGauss identifier length cap
+const maxIdentifier = 63
 
 var sanitizePattern = regexp.MustCompile(`[^a-z0-9_]`)
 
-// NamesFor derives every object name of an instance from its platform id.
-func NamesFor(instanceID, prefix string) Names {
-	tail := sanitizePattern.ReplaceAllString(strings.ToLower(instanceID), "")
-	if len(tail) > maxIdentifier-len(prefix)-1 {
-		tail = tail[:maxIdentifier-len(prefix)-1]
+// shortHash returns a deterministic 12-character hex prefix of the SHA-256
+// of the input, enough to avoid collisions in any realistic deployment.
+func shortHash(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:6])
+}
+
+// sanitizeName prepares a user-supplied name for use as part of an
+// openGauss identifier: lowercase, only [a-z0-9_], truncated to maxLen.
+func sanitizeName(name string, maxLen int) string {
+	cleaned := sanitizePattern.ReplaceAllString(strings.ToLower(name), "")
+	if len(cleaned) > maxLen {
+		cleaned = cleaned[:maxLen]
 	}
-	database := prefix + "_" + tail
+	return cleaned
+}
+
+// NamesFor derives the object names from the instance ID, or from a
+// user-supplied name if one was given.
+func NamesFor(instanceID, prefix, customName string) Names {
+	var base string
+	if name := sanitizeName(customName, maxIdentifier-len(prefix)-4); name != "" {
+		base = prefix + "_" + name
+	} else {
+		base = prefix + "_" + shortHash(instanceID)
+	}
 	return Names{
-		Database:   database,
-		GroupRole:  database + "_grp",
-		Tablespace: database + "_ts",
+		Database:   base,
+		GroupRole:  base + "_grp",
+		Tablespace: base + "_ts",
 	}
 }
 
-// UserFor derives the login user name of a binding from its platform id.
-func UserFor(bindingID, prefix string) string {
-	tail := sanitizePattern.ReplaceAllString(strings.ToLower(bindingID), "")
-	if len(tail) > maxIdentifier-len(prefix)-2 {
-		tail = tail[:maxIdentifier-len(prefix)-2]
+// UserFor derives the binding user name from the binding ID, or from a
+// user-supplied name if one was given.
+func UserFor(bindingID, prefix, customName string) string {
+	var base string
+	if name := sanitizeName(customName, maxIdentifier-len(prefix)-1); name != "" {
+		base = prefix + "u_" + name
+	} else {
+		base = prefix + "u_" + shortHash(bindingID)
 	}
-	return prefix + "u_" + tail
+	return base
 }
 
 // Admin executes the object lifecycle on openGauss.
@@ -86,20 +100,17 @@ func (a *Admin) HealthCheck(ctx context.Context) error {
 	return a.db.Ping(ctx)
 }
 
-// Provision creates the tenant: group role, tablespace, database, and
-// the shared public schema setup.
+// Provision creates the tenant: group role, tablespace, database.
 func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams) error {
 	if exists, err := a.db.Exists(ctx, "pg_database", "datname", names.Database); err != nil {
 		return err
 	} else if exists {
 		return AlreadyExistsError{fmt.Sprintf("database %q already exists", names.Database)}
 	}
-	for _, role := range []string{names.GroupRole} {
-		if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", role); err != nil {
-			return err
-		} else if exists {
-			return AlreadyExistsError{fmt.Sprintf("role %q already exists", role)}
-		}
+	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", names.GroupRole); err != nil {
+		return err
+	} else if exists {
+		return AlreadyExistsError{fmt.Sprintf("role %q already exists", names.GroupRole)}
 	}
 	if exists, err := a.db.Exists(ctx, "pg_tablespace", "spcname", names.Tablespace); err != nil {
 		return err
@@ -115,7 +126,6 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 	err := a.db.Exec(ctx, admin,
 		fmt.Sprintf("CREATE ROLE %s NOLOGIN PASSWORD %s", grp, quoteLiteral(randomPassword())),
 		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
-		// Dedicated tablespace: the hard per-tenant storage cap.
 		fmt.Sprintf("CREATE TABLESPACE %s OWNER %s RELATIVE LOCATION %s MAXSIZE %s",
 			ts, grp,
 			quoteLiteral(a.cfg.TablespacePrefix+"/"+names.Tablespace),
@@ -125,7 +135,6 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		return err
 	}
 
-	// The logical database, with the capped tablespace as its default.
 	if err := a.db.Exec(ctx, admin,
 		fmt.Sprintf("CREATE DATABASE %s OWNER %s TEMPLATE template0 ENCODING %s DBCOMPATIBILITY %s TABLESPACE %s CONNECTION LIMIT %d",
 			db, grp, quoteLiteral(spec.Encoding), quoteLiteral(spec.Compatibility), ts, spec.MaxConnections),
@@ -133,7 +142,6 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		return err
 	}
 
-	// Tenant-side setup: public is the shared namespace.
 	if err := a.db.Exec(ctx, names.Database,
 		fmt.Sprintf("ALTER DATABASE %s ENABLE PRIVATE OBJECT", db),
 		fmt.Sprintf("GRANT USAGE, CREATE ON SCHEMA public TO %s", grp),
@@ -142,7 +150,6 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		return err
 	}
 
-	// Lock down: only the group and the broker admin may connect.
 	return a.db.Exec(ctx, admin,
 		fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", db),
 		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, grp),
@@ -152,9 +159,7 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 }
 
 // Bind creates a read-write login user that joins the tenant's group role.
-// Everything the user creates in public is visible to the whole group via
-// per-binding default privileges.
-func (a *Admin) Bind(ctx context.Context, names Names, username string, spec BindingParams) (string, error) {
+func (a *Admin) Bind(ctx context.Context, names Names, username string) (string, error) {
 	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", username); err != nil {
 		return "", err
 	} else if exists {
@@ -165,14 +170,12 @@ func (a *Admin) Bind(ctx context.Context, names Names, username string, spec Bin
 	user, grp := quoteIdent(username), quoteIdent(names.GroupRole)
 
 	if err := a.db.Exec(ctx, a.adminDB(),
-		fmt.Sprintf("CREATE USER %s LOGIN PASSWORD %s CONNECTION LIMIT %d", user, quoteLiteral(password), spec.MaxConnections),
+		fmt.Sprintf("CREATE USER %s LOGIN PASSWORD %s", user, quoteLiteral(password)),
 		fmt.Sprintf("GRANT %s TO %s", grp, user),
 	); err != nil {
 		return "", err
 	}
 
-	// Per-binding default privileges: the SYSADMIN admin can set these
-	// directly in the tenant database without membership in the user's role.
 	if err := a.db.Exec(ctx, names.Database,
 		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", user, grp),
 		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s", user, grp),
@@ -198,7 +201,7 @@ func (a *Admin) Unbind(ctx context.Context, names Names, username string) error 
 	)
 }
 
-// Deprovision removes the whole tenant: database, tablespace, group role.
+// Deprovision removes the whole tenant.
 func (a *Admin) Deprovision(ctx context.Context, names Names) error {
 	admin := a.adminDB()
 	grp, ts, db := quoteIdent(names.GroupRole), quoteIdent(names.Tablespace), quoteIdent(names.Database)
@@ -213,14 +216,12 @@ func (a *Admin) Deprovision(ctx context.Context, names Names) error {
 	)
 }
 
-// Update changes the connection limit and the storage cap of an instance.
+// Update changes the connection limit and the storage cap.
 func (a *Admin) Update(ctx context.Context, names Names, spec InstanceParams) error {
 	grp, db := quoteIdent(names.GroupRole), quoteIdent(names.Database)
 	return a.db.Exec(ctx, a.adminDB(),
 		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
 		fmt.Sprintf("ALTER DATABASE %s CONNECTION LIMIT = %d", db, spec.MaxConnections),
-		// If the new quota is below current usage the change still succeeds,
-		// but writes are blocked until usage drops under the new limit.
 		fmt.Sprintf("ALTER TABLESPACE %s RESIZE MAXSIZE %s", quoteIdent(names.Tablespace), quoteLiteral(quotaString(spec.StorageGB))),
 		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
 	)
@@ -233,7 +234,6 @@ func (e AlreadyExistsError) Error() string { return e.Message }
 
 func (a *Admin) adminDB() string { return a.cfg.DBAdminName }
 
-// quotaString formats a GB amount the way MAXSIZE expects it: e.g. 5 -> '5G'.
 func quotaString(gb int) string { return fmt.Sprintf("%dG", gb) }
 
 func quoteIdent(name string) string {

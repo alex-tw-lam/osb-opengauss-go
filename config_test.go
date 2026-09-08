@@ -14,9 +14,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.PlansFile != "plans.toml" || cfg.TablespacePrefix != "broker" {
 		t.Fatalf("defaults wrong: %+v", cfg)
 	}
-	if len(cfg.Tablespaces) != 2 || cfg.Tablespaces[0] != "ts_ssd" {
-		t.Fatalf("tablespace allowlist wrong: %v", cfg.Tablespaces)
-	}
 }
 
 func TestLoadConfigRejectsMultiSegmentPrefix(t *testing.T) {
