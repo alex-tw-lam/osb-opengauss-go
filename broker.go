@@ -58,6 +58,9 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, err
 	}
+	if err := ValidateParameters(instanceSchema(plan), details.RawParameters); err != nil {
+		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
+	}
 	params, err := RawParameters(details.RawParameters)
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
@@ -106,6 +109,9 @@ func (b *Broker) Update(ctx context.Context, instanceID string, details domain.U
 	plan, err := b.plan(previousPlan)
 	if err != nil {
 		return domain.UpdateServiceSpec{}, err
+	}
+	if err := ValidateParameters(updatableSchema(plan), details.RawParameters); err != nil {
+		return domain.UpdateServiceSpec{}, invalidInput(err.Error())
 	}
 	params, err := RawParameters(details.RawParameters)
 	if err != nil {
@@ -165,6 +171,9 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 	plan, err := b.plan(instance.PlanID)
 	if err != nil {
 		return domain.Binding{}, err
+	}
+	if err := ValidateParameters(bindingSchema(plan), details.RawParameters); err != nil {
+		return domain.Binding{}, invalidInput(err.Error())
 	}
 	params, err := RawParameters(details.RawParameters)
 	if err != nil {
