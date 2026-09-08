@@ -17,9 +17,7 @@ type Plan struct {
 	ID             string `toml:"id"`
 	Name           string `toml:"name"`
 	Description    string `toml:"description"`
-	StorageGB      int    `toml:"storage_gb"` // PERM SPACE / tablespace MAXSIZE
-	TempGB         int    `toml:"temp_gb"`    // TEMP SPACE
-	SpillGB        int    `toml:"spill_gb"`   // SPILL SPACE
+	StorageGB      int    `toml:"storage_gb"` // tablespace MAXSIZE
 	MaxConnections int    `toml:"max_connections"`
 	Free           *bool  `toml:"free"` // defaults to true when omitted
 }
@@ -49,7 +47,7 @@ func LoadPlans(path string) ([]Plan, error) {
 			return nil, fmt.Errorf("plan #%d in %s is missing id, name or description", i+1, path)
 		case seen[plan.ID]:
 			return nil, fmt.Errorf("duplicate plan id %q in %s", plan.ID, path)
-		case plan.StorageGB < 1 || plan.TempGB < 1 || plan.SpillGB < 1 || plan.MaxConnections < 1:
+		case plan.StorageGB < 1 || plan.MaxConnections < 1:
 			return nil, fmt.Errorf("plan %q in %s: quota values must be positive integers", plan.ID, path)
 		}
 		seen[plan.ID] = true
@@ -73,8 +71,7 @@ func Catalog(plans []Plan, tablespaces []string) []domain.Service {
 			Metadata: &domain.ServicePlanMetadata{
 				DisplayName: "GaussDB " + plan.Name,
 				Bullets: []string{
-					fmt.Sprintf("%d GB storage quota", plan.StorageGB),
-					fmt.Sprintf("%d GB temp / %d GB spill quota", plan.TempGB, plan.SpillGB),
+					fmt.Sprintf("%d GB storage (tablespace MAXSIZE)", plan.StorageGB),
 					fmt.Sprintf("up to %d concurrent connections", plan.MaxConnections),
 				},
 			},

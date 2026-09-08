@@ -48,7 +48,7 @@ func main() {
 		Handler:           newHandler(cfg, NewBroker(cfg, plans, NewAdmin(cfg, NewDB(cfg)), store, logger), logger),
 	}
 	go func() {
-		logger.Info("broker listening", "address", server.Addr, "storage_mode", cfg.StorageMode)
+		logger.Info("broker listening", "address", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)

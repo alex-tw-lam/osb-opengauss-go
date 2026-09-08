@@ -3,26 +3,19 @@
 // openGauss. Names are always identifier-quoted, literals always escaped.
 // The DB interface keeps this file testable without a database.
 //
-// The model is the simplest native openGauss layout:
+// The model is the simplest native openGauss layout. Each tenant gets:
 //
-//	Provision: one NOLOGIN group role owns the logical database; the public
-//	schema is the shared namespace. The broker admin (SYSADMIN) takes the
-//	group membership only for the CREATE DATABASE and drops it right after.
+//	One NOLOGIN group role (gdb_<id>_grp) that owns:
+//	  - the logical database (gdb_<id>) with CONNECTION LIMIT
+//	  - a dedicated tablespace (gdb_<id>_ts) with MAXSIZE
 //
-//	Bind: a LOGIN user joins the group. Because the broker admin is SYSADMIN,
-//	per-binding default privileges are set directly in the tenant database
-//	without any membership dance. Everything a binding creates in public is
-//	automatically visible to the whole group.
+//	Storage is capped by the tablespace MAXSIZE (storage layer, always
+//	enforced). Connections are capped by the database CONNECTION LIMIT.
+//	There are no role-level space quotas.
 //
-// openGauss specifics this file encodes:
-//   - The public schema in a new database is owned by the cluster's initial
-//     user, so granting on it requires SYSADMIN.
-//   - CREATE ROLE requires a password even for NOLOGIN roles.
-//   - ALTER ROLE ... SET role (the Azure pattern) is not supported on
-//     PostgreSQL 9.2 based servers; per-binding default privileges are the
-//     equivalent mechanism.
-//   - SYSADMIN can set default privileges for any role from within the
-//     tenant database, without being a member of that role.
+//	Binding users are LOGIN users who join the group role. The public
+//	schema is the shared namespace; per-binding ALTER DEFAULT PRIVILEGES
+//	make everything each user creates visible to the whole group.
 
 package main
 
@@ -93,7 +86,7 @@ func (a *Admin) HealthCheck(ctx context.Context) error {
 	return a.db.Ping(ctx)
 }
 
-// Provision creates the tenant: the group role, the logical database, and
+// Provision creates the tenant: group role, tablespace, database, and
 // the shared public schema setup.
 func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams) error {
 	if exists, err := a.db.Exists(ctx, "pg_database", "datname", names.Database); err != nil {
@@ -101,54 +94,41 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 	} else if exists {
 		return AlreadyExistsError{fmt.Sprintf("database %q already exists", names.Database)}
 	}
-	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", names.GroupRole); err != nil {
+	for _, role := range []string{names.GroupRole} {
+		if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", role); err != nil {
+			return err
+		} else if exists {
+			return AlreadyExistsError{fmt.Sprintf("role %q already exists", role)}
+		}
+	}
+	if exists, err := a.db.Exists(ctx, "pg_tablespace", "spcname", names.Tablespace); err != nil {
 		return err
 	} else if exists {
-		return AlreadyExistsError{fmt.Sprintf("role %q already exists", names.GroupRole)}
+		return AlreadyExistsError{fmt.Sprintf("tablespace %q already exists", names.Tablespace)}
 	}
 
 	admin := a.adminDB()
-	grp, db := quoteIdent(names.GroupRole), quoteIdent(names.Database)
+	grp, ts, db := quoteIdent(names.GroupRole), quoteIdent(names.Tablespace), quoteIdent(names.Database)
 
 	// openGauss requires a password on CREATE ROLE even for NOLOGIN roles.
-	tablespaceClause := ""
-	var tablespaceStmt []string
-	if a.cfg.StorageMode == "tablespace" {
-		if exists, err := a.db.Exists(ctx, "pg_tablespace", "spcname", names.Tablespace); err != nil {
-			return err
-		} else if exists {
-			return AlreadyExistsError{fmt.Sprintf("tablespace %q already exists", names.Tablespace)}
-		}
-		tablespaceStmt = []string{
-			fmt.Sprintf("CREATE TABLESPACE %s OWNER %s RELATIVE LOCATION %s MAXSIZE %s",
-				quoteIdent(names.Tablespace), grp,
-				quoteLiteral(a.cfg.TablespacePrefix+"/"+names.Tablespace),
-				quoteLiteral(quotaString(spec.StorageGB))),
-		}
-		tablespaceClause = " TABLESPACE " + quoteIdent(names.Tablespace)
-	} else if spec.Tablespace != "" {
-		tablespaceClause = " TABLESPACE " + quoteIdent(spec.Tablespace)
-	}
-
-	// One group role: owns the database and is the access group for bindings.
+	// CREATE DATABASE OWNER and CREATE TABLESPACE OWNER require membership.
 	err := a.db.Exec(ctx, admin,
 		fmt.Sprintf("CREATE ROLE %s NOLOGIN PASSWORD %s", grp, quoteLiteral(randomPassword())),
-		// CREATE DATABASE ... OWNER requires membership in the owner.
 		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
+		// Dedicated tablespace: the hard per-tenant storage cap.
+		fmt.Sprintf("CREATE TABLESPACE %s OWNER %s RELATIVE LOCATION %s MAXSIZE %s",
+			ts, grp,
+			quoteLiteral(a.cfg.TablespacePrefix+"/"+names.Tablespace),
+			quoteLiteral(quotaString(spec.StorageGB))),
 	)
 	if err != nil {
 		return err
 	}
-	if len(tablespaceStmt) > 0 {
-		if err := a.db.Exec(ctx, admin, tablespaceStmt...); err != nil {
-			return err
-		}
-	}
 
-	// The logical database, cloned from template0.
+	// The logical database, with the capped tablespace as its default.
 	if err := a.db.Exec(ctx, admin,
-		fmt.Sprintf("CREATE DATABASE %s OWNER %s TEMPLATE template0 ENCODING %s DBCOMPATIBILITY %s%s CONNECTION LIMIT %d",
-			db, grp, quoteLiteral(spec.Encoding), quoteLiteral(spec.Compatibility), tablespaceClause, spec.MaxConnections),
+		fmt.Sprintf("CREATE DATABASE %s OWNER %s TEMPLATE template0 ENCODING %s DBCOMPATIBILITY %s TABLESPACE %s CONNECTION LIMIT %d",
+			db, grp, quoteLiteral(spec.Encoding), quoteLiteral(spec.Compatibility), ts, spec.MaxConnections),
 	); err != nil {
 		return err
 	}
@@ -163,33 +143,18 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 	}
 
 	// Lock down: only the group and the broker admin may connect.
-	final := []string{
+	return a.db.Exec(ctx, admin,
 		fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", db),
 		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, grp),
 		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, quoteIdent(a.cfg.DBUser)),
-		// Drop the temporary membership used for CREATE DATABASE OWNER.
 		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
-	}
-	final = append(final, a.roleQuotaStatements(grp, spec)...)
-	return a.db.Exec(ctx, admin, final...)
-}
-
-// roleQuotaStatements returns the space quota statements for a role.
-func (a *Admin) roleQuotaStatements(role string, spec InstanceParams) []string {
-	statements := []string{
-		fmt.Sprintf("ALTER ROLE %s TEMP SPACE %s", role, quoteLiteral(quotaString(spec.TempGB))),
-		fmt.Sprintf("ALTER ROLE %s SPILL SPACE %s", role, quoteLiteral(quotaString(spec.SpillGB))),
-	}
-	if a.cfg.StorageMode == "role_quota" {
-		return append([]string{fmt.Sprintf("ALTER ROLE %s PERM SPACE %s", role, quoteLiteral(quotaString(spec.StorageGB)))}, statements...)
-	}
-	return statements
+	)
 }
 
 // Bind creates a read-write login user that joins the tenant's group role.
 // Everything the user creates in public is visible to the whole group via
-// per-binding default privileges (set by the SYSADMIN admin directly).
-func (a *Admin) Bind(ctx context.Context, names Names, username string, spec BindingParams, instance InstanceParams) (string, error) {
+// per-binding default privileges.
+func (a *Admin) Bind(ctx context.Context, names Names, username string, spec BindingParams) (string, error) {
 	if exists, err := a.db.Exists(ctx, "pg_roles", "rolname", username); err != nil {
 		return "", err
 	} else if exists {
@@ -199,15 +164,10 @@ func (a *Admin) Bind(ctx context.Context, names Names, username string, spec Bin
 	password := randomPassword()
 	user, grp := quoteIdent(username), quoteIdent(names.GroupRole)
 
-	// Create the user and join the group.
 	if err := a.db.Exec(ctx, a.adminDB(),
 		fmt.Sprintf("CREATE USER %s LOGIN PASSWORD %s CONNECTION LIMIT %d", user, quoteLiteral(password), spec.MaxConnections),
 		fmt.Sprintf("GRANT %s TO %s", grp, user),
 	); err != nil {
-		return "", err
-	}
-	// Quotas on the user too.
-	if err := a.db.Exec(ctx, a.adminDB(), a.roleQuotaStatements(user, instance)...); err != nil {
 		return "", err
 	}
 
@@ -226,7 +186,6 @@ func (a *Admin) Bind(ctx context.Context, names Names, username string, spec Bin
 // Unbind removes the binding user and everything it owns.
 func (a *Admin) Unbind(ctx context.Context, names Names, username string) error {
 	user := quoteIdent(username)
-	// Terminate sessions, then drop everything the user owns.
 	if err := a.db.Exec(ctx, names.Database,
 		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s", quoteLiteral(username)),
 		fmt.Sprintf("DROP OWNED BY %s CASCADE", user),
@@ -242,41 +201,29 @@ func (a *Admin) Unbind(ctx context.Context, names Names, username string) error 
 // Deprovision removes the whole tenant: database, tablespace, group role.
 func (a *Admin) Deprovision(ctx context.Context, names Names) error {
 	admin := a.adminDB()
-	grp, db := quoteIdent(names.GroupRole), quoteIdent(names.Database)
+	grp, ts, db := quoteIdent(names.GroupRole), quoteIdent(names.Tablespace), quoteIdent(names.Database)
 
-	statements := []string{
-		// Only the owner may drop the database.
+	return a.db.Exec(ctx, admin,
 		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
 		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s", quoteLiteral(names.Database)),
 		fmt.Sprintf("DROP DATABASE IF EXISTS %s", db),
-	}
-	if a.cfg.StorageMode == "tablespace" {
-		statements = append(statements, fmt.Sprintf("DROP TABLESPACE IF EXISTS %s", quoteIdent(names.Tablespace)))
-	}
-	statements = append(statements,
-		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", grp),
+		fmt.Sprintf("DROP TABLESPACE IF EXISTS %s", ts),
 		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
 		fmt.Sprintf("DROP ROLE IF EXISTS %s", grp),
 	)
-	return a.db.Exec(ctx, admin, statements...)
 }
 
-// Update changes the connection limit and the quotas of an instance.
+// Update changes the connection limit and the storage cap of an instance.
 func (a *Admin) Update(ctx context.Context, names Names, spec InstanceParams) error {
 	grp, db := quoteIdent(names.GroupRole), quoteIdent(names.Database)
-	statements := []string{
-		// ALTER DATABASE is owner-only.
+	return a.db.Exec(ctx, a.adminDB(),
 		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
 		fmt.Sprintf("ALTER DATABASE %s CONNECTION LIMIT = %d", db, spec.MaxConnections),
-	}
-	if a.cfg.StorageMode == "tablespace" {
-		statements = append(statements,
-			fmt.Sprintf("ALTER TABLESPACE %s RESIZE MAXSIZE %s",
-				quoteIdent(names.Tablespace), quoteLiteral(quotaString(spec.StorageGB))))
-	}
-	statements = append(statements, a.roleQuotaStatements(grp, spec)...)
-	statements = append(statements, fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)))
-	return a.db.Exec(ctx, a.adminDB(), statements...)
+		// If the new quota is below current usage the change still succeeds,
+		// but writes are blocked until usage drops under the new limit.
+		fmt.Sprintf("ALTER TABLESPACE %s RESIZE MAXSIZE %s", quoteIdent(names.Tablespace), quoteLiteral(quotaString(spec.StorageGB))),
+		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
+	)
 }
 
 // AlreadyExistsError marks object names that are already taken in openGauss.
@@ -286,8 +233,7 @@ func (e AlreadyExistsError) Error() string { return e.Message }
 
 func (a *Admin) adminDB() string { return a.cfg.DBAdminName }
 
-// quotaString formats a GB amount the way PERM/TEMP/SPILL SPACE and MAXSIZE
-// expect it: single-letter unit, e.g. 5 -> '5G'.
+// quotaString formats a GB amount the way MAXSIZE expects it: e.g. 5 -> '5G'.
 func quotaString(gb int) string { return fmt.Sprintf("%dG", gb) }
 
 func quoteIdent(name string) string {

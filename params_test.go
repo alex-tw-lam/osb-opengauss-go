@@ -4,7 +4,7 @@ import "testing"
 
 var devPlan = Plan{
 	ID: "gaussdb-dev", Name: "dev", Description: "dev",
-	StorageGB: 5, TempGB: 1, SpillGB: 1, MaxConnections: 20,
+	StorageGB: 5, MaxConnections: 20,
 }
 
 func TestResolveInstanceParamsDefaults(t *testing.T) {

@@ -27,7 +27,7 @@ func withAuth(request *http.Request) *http.Request {
 // newTestServer builds the real HTTP handler on a fake database.
 func newTestServer(t *testing.T, db *fakeDB) http.Handler {
 	t.Helper()
-	cfg := testConfig("role_quota")
+	cfg := testConfig()
 	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
 	store, err := OpenStore(cfg)
 	if err != nil {

@@ -66,11 +66,6 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 	if err != nil {
 		return domain.ProvisionedServiceSpec{}, invalidInput(err.Error())
 	}
-	if b.cfg.StorageMode == "tablespace" && spec.Tablespace != "" {
-		return domain.ProvisionedServiceSpec{}, invalidInput(
-			"'tablespace' cannot be set in tablespace storage mode (each instance already gets a dedicated quota-capped tablespace)")
-	}
-
 	if existing := b.store.GetInstance(instanceID); existing != nil {
 		if existing.PlanID == spec.PlanID && reflect.DeepEqual(existing.Params, spec) {
 			return domain.ProvisionedServiceSpec{AlreadyExists: true}, nil
@@ -189,7 +184,7 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 	names := NamesFor(instanceID, b.cfg.NamePrefix)
 	username := UserFor(bindingID, b.cfg.NamePrefix)
 	b.log.Info("binding user", "user", username, "database", names.Database)
-	password, err := b.admin.Bind(ctx, names, username, spec, instance.Params)
+	password, err := b.admin.Bind(ctx, names, username, spec)
 	if err != nil {
 		return domain.Binding{}, mapAdminError(err, apiresponses.ErrBindingAlreadyExists)
 	}

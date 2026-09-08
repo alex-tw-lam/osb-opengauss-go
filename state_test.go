@@ -8,7 +8,7 @@ import (
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	cfg := testConfig("role_quota")
+	cfg := testConfig()
 	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
 	store, err := OpenStore(cfg)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestBindingStateRoundTrip(t *testing.T) {
 }
 
 func TestStateDSNValidation(t *testing.T) {
-	cfg := testConfig("role_quota")
+	cfg := testConfig()
 	cfg.StateDSN = "mysql://nope"
 	_, err := OpenStore(cfg)
 	if err == nil || !strings.Contains(err.Error(), "STATE_DSN") {

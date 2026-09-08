@@ -22,8 +22,6 @@ type InstanceParams struct {
 	Tablespace     string `json:"tablespace"`
 	MaxConnections int    `json:"max_connections"`
 	StorageGB      int    `json:"storage_gb"`
-	TempGB         int    `json:"temp_gb"`
-	SpillGB        int    `json:"spill_gb"`
 }
 
 // BindingParams is the fully resolved parameter set of one binding user.
@@ -53,8 +51,6 @@ func ResolveInstanceParams(plan Plan, params map[string]any, allowedTablespaces 
 		Encoding:       "UTF8",
 		MaxConnections: plan.MaxConnections,
 		StorageGB:      plan.StorageGB,
-		TempGB:         plan.TempGB,
-		SpillGB:        plan.SpillGB,
 	}
 	if v, ok := params["compatibility"]; ok {
 		resolved.Compatibility = fmt.Sprint(v)
@@ -82,12 +78,6 @@ func ResolveInstanceParams(plan Plan, params map[string]any, allowedTablespaces 
 		return resolved, err
 	}
 	if resolved.StorageGB, err = boundedInt(params, "storage_gb", plan.StorageGB, plan.StorageGB); err != nil {
-		return resolved, err
-	}
-	if resolved.TempGB, err = boundedInt(params, "temp_gb", plan.TempGB, plan.TempGB); err != nil {
-		return resolved, err
-	}
-	if resolved.SpillGB, err = boundedInt(params, "spill_gb", plan.SpillGB, plan.SpillGB); err != nil {
 		return resolved, err
 	}
 	return resolved, nil
@@ -151,14 +141,6 @@ func instanceSchema(plan Plan, tablespaces []string) map[string]any {
 			"type": "integer", "minimum": 1, "maximum": plan.StorageGB, "default": plan.StorageGB,
 			"description": "Storage quota of the logical database.",
 		},
-		"temp_gb": map[string]any{
-			"type": "integer", "minimum": 1, "maximum": plan.TempGB, "default": plan.TempGB,
-			"description": "Temp-table space quota (TEMP SPACE).",
-		},
-		"spill_gb": map[string]any{
-			"type": "integer", "minimum": 1, "maximum": plan.SpillGB, "default": plan.SpillGB,
-			"description": "Operator spill-to-disk quota (SPILL SPACE).",
-		},
 	}
 	// Only curated tablespaces are offered, as an enum.
 	if len(tablespaces) > 0 {
@@ -176,7 +158,7 @@ func updatableSchema(plan Plan) map[string]any {
 	full := instanceSchema(plan, nil)
 	properties := full["properties"].(map[string]any)
 	updatable := map[string]any{}
-	for _, key := range []string{"max_connections", "storage_gb", "temp_gb", "spill_gb"} {
+	for _, key := range []string{"max_connections", "storage_gb"} {
 		updatable[key] = properties[key]
 	}
 	return map[string]any{"$schema": "http://json-schema.org/draft-04/schema#", "type": "object", "properties": updatable}

@@ -21,7 +21,6 @@ type Config struct {
 	DBAdminName      string
 	DBSSLMode        string
 	DBConnTimeout    int
-	StorageMode      string // "role_quota" or "tablespace"
 	Tablespaces      []string
 	PlansFile        string
 	TablespacePrefix string
@@ -55,7 +54,6 @@ func LoadConfig() (*Config, error) {
 		DBAdminName:      env("GAUSSDB_ADMIN_DB", "postgres"),
 		DBSSLMode:        env("GAUSSDB_SSLMODE", "disable"),
 		DBConnTimeout:    envInt("GAUSSDB_CONNECT_TIMEOUT", 10),
-		StorageMode:      env("GAUSSDB_STORAGE_MODE", "role_quota"),
 		PlansFile:        env("GAUSSDB_PLANS_FILE", "plans.toml"),
 		TablespacePrefix: env("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "broker"),
 		BrokerUsername:   env("BROKER_USERNAME", "broker"),
@@ -65,9 +63,6 @@ func LoadConfig() (*Config, error) {
 		NamePrefix:       env("GAUSSDB_NAME_PREFIX", "gdb"),
 		Host:             env("BROKER_HOST", "127.0.0.1"),
 		Port:             envInt("BROKER_PORT", 5000),
-	}
-	if cfg.StorageMode != "role_quota" && cfg.StorageMode != "tablespace" {
-		return nil, fmt.Errorf("GAUSSDB_STORAGE_MODE must be role_quota or tablespace, got %q", cfg.StorageMode)
 	}
 	cfg.TablespacePrefix = strings.Trim(cfg.TablespacePrefix, "/")
 	if strings.Contains(cfg.TablespacePrefix, "/") {

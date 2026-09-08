@@ -6,7 +6,7 @@ import (
 )
 
 func TestConnURLEscaping(t *testing.T) {
-	cfg := testConfig("role_quota") // user admin / admin-secret @ db.example.org:6789
+	cfg := testConfig() // user admin / admin-secret @ db.example.org:6789
 	url := connURL(cfg, "")
 	for _, want := range []string{
 		"gaussdb://admin:admin-secret@db.example.org:6789/postgres",

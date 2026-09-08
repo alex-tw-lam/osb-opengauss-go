@@ -14,9 +14,9 @@ import (
 const bid = "22222222-2222-2222-2222-222222222222"
 
 // newTestBroker builds a broker on a fake database and a real temp state file.
-func newTestBroker(t *testing.T, mode string) (*Broker, *fakeDB) {
+func newTestBroker(t *testing.T) (*Broker, *fakeDB) {
 	t.Helper()
-	cfg := testConfig(mode)
+	cfg := testConfig()
 	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
 	store, err := OpenStore(cfg)
 	if err != nil {
@@ -25,7 +25,7 @@ func newTestBroker(t *testing.T, mode string) (*Broker, *fakeDB) {
 	t.Cleanup(func() { store.Close() })
 	db := newFakeDB()
 	plans := []Plan{devPlan, {ID: "gaussdb-pro", Name: "pro", Description: "pro",
-		StorageGB: 200, TempGB: 40, SpillGB: 40, MaxConnections: 500}}
+		StorageGB: 200, MaxConnections: 500}}
 	return NewBroker(cfg, plans, NewAdmin(cfg, db), store, slog.Default()), db
 }
 
@@ -40,7 +40,7 @@ func bindDetails(params map[string]any) domain.BindDetails {
 }
 
 func TestProvisionLifecycle(t *testing.T) {
-	broker, db := newTestBroker(t, "role_quota")
+	broker, db := newTestBroker(t)
 	ctx := context.Background()
 
 	spec, err := broker.Provision(ctx, iid, provisionDetails(nil), false)
@@ -73,7 +73,7 @@ func TestProvisionLifecycle(t *testing.T) {
 }
 
 func TestBindUnbindDeprovision(t *testing.T) {
-	broker, _ := newTestBroker(t, "role_quota")
+	broker, _ := newTestBroker(t)
 	ctx := context.Background()
 	if _, err := broker.Provision(ctx, iid, provisionDetails(nil), false); err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestBindUnbindDeprovision(t *testing.T) {
 }
 
 func TestUpdateAndRetrieval(t *testing.T) {
-	broker, _ := newTestBroker(t, "role_quota")
+	broker, _ := newTestBroker(t)
 	ctx := context.Background()
 	if _, err := broker.Provision(ctx, iid, provisionDetails(nil), false); err != nil {
 		t.Fatal(err)

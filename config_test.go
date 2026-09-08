@@ -11,19 +11,11 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StorageMode != "role_quota" || cfg.PlansFile != "plans.toml" || cfg.TablespacePrefix != "broker" {
+	if cfg.PlansFile != "plans.toml" || cfg.TablespacePrefix != "broker" {
 		t.Fatalf("defaults wrong: %+v", cfg)
 	}
 	if len(cfg.Tablespaces) != 2 || cfg.Tablespaces[0] != "ts_ssd" {
 		t.Fatalf("tablespace allowlist wrong: %v", cfg.Tablespaces)
-	}
-}
-
-func TestLoadConfigRejectsBadValues(t *testing.T) {
-	t.Setenv("GAUSSDB_STORAGE_MODE", "bogus")
-	_, err := LoadConfig()
-	if err == nil || !strings.Contains(err.Error(), "GAUSSDB_STORAGE_MODE") {
-		t.Fatalf("expected storage mode error, got %v", err)
 	}
 }
 
