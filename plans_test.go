@@ -17,6 +17,8 @@ func writePlans(t *testing.T, content string) string {
 }
 
 const validPlans = `
+service_id = "test-service-id"
+
 [[plan]]
 id = "p1"
 name = "one"
@@ -36,48 +38,48 @@ free = false
 `
 
 func TestLoadPlansValid(t *testing.T) {
-	plans, err := LoadPlans(writePlans(t, validPlans))
+	data, err := LoadCatalog(writePlans(t, validPlans))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plans) != 2 || plans[0].ID != "p1" || plans[0].StorageGB != 5 {
-		t.Fatalf("unexpected plans: %+v", plans)
+	if len(data.Plans) != 2 || data.Plans[0].ID != "p1" || data.Plans[0].StorageGB != 5 {
+		t.Fatalf("unexpected data.Plans: %+v", data.Plans)
 	}
-	if plans[0].Free != nil || plans[1].Free == nil || *plans[1].Free {
-		t.Errorf("free default/override wrong: %+v %+v", plans[0].Free, plans[1].Free)
+	if data.Plans[0].Free != nil || data.Plans[1].Free == nil || *data.Plans[1].Free {
+		t.Errorf("free default/override wrong: %+v %+v", data.Plans[0].Free, data.Plans[1].Free)
 	}
 }
 
 func TestLoadPlansMissing(t *testing.T) {
-	if _, err := LoadPlans(filepath.Join(t.TempDir(), "nope.toml")); err == nil || !strings.Contains(err.Error(), "not readable") {
+	if _, err := LoadCatalog(filepath.Join(t.TempDir(), "nope.toml")); err == nil || !strings.Contains(err.Error(), "not readable") {
 		t.Fatalf("expected not-readable error, got %v", err)
 	}
 }
 
 func TestLoadPlansEmpty(t *testing.T) {
-	_, err := LoadPlans(writePlans(t, "# nothing\n"))
+	_, err := LoadCatalog(writePlans(t, "service_id = \"test-service-id\"\n"))
 	if err == nil || !strings.Contains(err.Error(), "no [[plan]] entries") {
 		t.Fatalf("expected empty error, got %v", err)
 	}
 }
 
 func TestLoadPlansDuplicateID(t *testing.T) {
-	_, err := LoadPlans(writePlans(t, strings.Replace(validPlans, `id = "p2"`, `id = "p1"`, 1)))
+	_, err := LoadCatalog(writePlans(t, strings.Replace(validPlans, `id = "p2"`, `id = "p1"`, 1)))
 	if err == nil || !strings.Contains(err.Error(), "duplicate plan id") {
 		t.Fatalf("expected duplicate error, got %v", err)
 	}
 }
 
 func TestLoadPlansNonPositiveQuota(t *testing.T) {
-	_, err := LoadPlans(writePlans(t, strings.Replace(validPlans, "storage_gb = 5", "storage_gb = 0", 1)))
+	_, err := LoadCatalog(writePlans(t, strings.Replace(validPlans, "storage_gb = 5", "storage_gb = 0", 1)))
 	if err == nil || !strings.Contains(err.Error(), "positive") {
 		t.Fatalf("expected quota error, got %v", err)
 	}
 }
 
 func TestCatalogExposesSchemas(t *testing.T) {
-	plans, _ := LoadPlans(writePlans(t, validPlans))
-	services := Catalog(plans)
+	data, _ := LoadCatalog(writePlans(t, validPlans))
+	services := Catalog(data)
 	if len(services) != 1 || len(services[0].Plans) != 2 {
 		t.Fatalf("unexpected catalog: %+v", services)
 	}

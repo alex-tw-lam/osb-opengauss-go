@@ -1,27 +1,29 @@
-# Service plans offered by the broker.
+# Service catalog data for the broker.
 #
-# This file is DATA: each deployment (lab / staging / prod) carries its own
-# copy. Changes take effect on broker restart.
+# This file is DATA: each deployment carries its own copy.
+# Changes take effect on broker restart.
 #
-# Plan ids are referenced by platforms once instances exist on a plan,
-# so never rename or reuse an id; add a new plan instead.
+# The service_id is referenced by platforms once instances exist,
+# so never change it after the first provision.
+
+service_id = "4c6f6a1e-0f5a-4a5b-9d7e-2f8b3a1c5e01"
 
 [[plan]]
-id = "gaussdb-dev"
+id = "dev"
 name = "dev"
 description = "Small logical database for development and CI."
 storage_gb = 5        # tablespace MAXSIZE
 max_connections = 20  # database CONNECTION LIMIT
 
 [[plan]]
-id = "gaussdb-standard"
+id = "standard"
 name = "standard"
 description = "Standard logical database for production workloads."
 storage_gb = 50
 max_connections = 100
 
 [[plan]]
-id = "gaussdb-pro"
+id = "pro"
 name = "pro"
 description = "Large logical database with high connection numbers."
 storage_gb = 200

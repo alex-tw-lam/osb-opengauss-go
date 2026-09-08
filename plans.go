@@ -1,6 +1,6 @@
-// plans.go loads the plan catalog from the plans.toml data file and assembles
-// the Open Service Broker catalog from it. The data file is deployment data;
-// this file is the code that validates it and publishes it.
+// plans.go loads the service catalog from the plans.toml data file and
+// assembles the Open Service Broker catalog from it. The data file is
+// deployment data; this file is the code that validates it and publishes it.
 
 package main
 
@@ -17,31 +17,40 @@ type Plan struct {
 	ID             string `toml:"id"`
 	Name           string `toml:"name"`
 	Description    string `toml:"description"`
-	StorageGB      int    `toml:"storage_gb"` // tablespace MAXSIZE
+	StorageGB      int    `toml:"storage_gb"`
 	MaxConnections int    `toml:"max_connections"`
-	Free           *bool  `toml:"free"` // defaults to true when omitted
+	Free           *bool  `toml:"free"`
 }
 
-const serviceID = "4c6f6a1e-0f5a-4a5b-9d7e-2f8b3a1c5e01"
+// ServiceConfig holds the service-level metadata from the plans file.
+type ServiceConfig struct {
+	ServiceID string `toml:"service_id"`
+}
 
-// LoadPlans reads and validates the plans file; any problem is an error so a
-// broken data file can never produce a half-usable catalog.
-func LoadPlans(path string) ([]Plan, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 // the path is operator configuration (GAUSSDB_PLANS_FILE), not request input
+// CatalogData is the parsed contents of plans.toml.
+type CatalogData struct {
+	ServiceConfig
+	Plans []Plan `toml:"plan"`
+}
+
+// LoadCatalog reads and validates the plans file.
+func LoadCatalog(path string) (*CatalogData, error) {
+	raw, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, fmt.Errorf("plans file not readable: %w", err)
 	}
-	var file struct {
-		Plan []Plan `toml:"plan"`
-	}
-	if err := toml.Unmarshal(raw, &file); err != nil {
+	var data CatalogData
+	if err := toml.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("plans file %s is not valid TOML: %w", path, err)
 	}
-	if len(file.Plan) == 0 {
+	if data.ServiceID == "" {
+		return nil, fmt.Errorf("plans file %s is missing service_id", path)
+	}
+	if len(data.Plans) == 0 {
 		return nil, fmt.Errorf("plans file %s contains no [[plan]] entries", path)
 	}
 	seen := map[string]bool{}
-	for i, plan := range file.Plan {
+	for i, plan := range data.Plans {
 		switch {
 		case plan.ID == "" || plan.Name == "" || plan.Description == "":
 			return nil, fmt.Errorf("plan #%d in %s is missing id, name or description", i+1, path)
@@ -52,15 +61,15 @@ func LoadPlans(path string) ([]Plan, error) {
 		}
 		seen[plan.ID] = true
 	}
-	return file.Plan, nil
+	return &data, nil
 }
 
-// Catalog assembles the /v2/catalog payload for the loaded plans.
-func Catalog(plans []Plan) []domain.Service {
-	servicePlans := make([]domain.ServicePlan, 0, len(plans))
-	for _, plan := range plans {
+// Catalog assembles the /v2/catalog payload.
+func Catalog(data *CatalogData) []domain.Service {
+	plans := make([]domain.ServicePlan, 0, len(data.Plans))
+	for _, plan := range data.Plans {
 		free := plan.Free == nil || *plan.Free
-		servicePlans = append(servicePlans, domain.ServicePlan{
+		plans = append(plans, domain.ServicePlan{
 			ID:          plan.ID,
 			Name:        plan.Name,
 			Description: plan.Description,
@@ -84,18 +93,17 @@ func Catalog(plans []Plan) []domain.Service {
 		})
 	}
 	return []domain.Service{{
-		ID:                   serviceID,
+		ID:                   data.ServiceID,
 		Name:                 "gaussdb",
-		Description:          "openGauss/GaussDB logical databases as multi-tenant service instances. Each instance is an isolated logical database; bindings are user accounts scoped to that database.",
+		Description:          "openGauss/GaussDB logical databases as multi-tenant service instances.",
 		Bindable:             true,
 		InstancesRetrievable: true,
 		BindingsRetrievable:  true,
 		Tags:                 []string{"gaussdb", "opengauss", "postgresql", "database", "sql"},
 		PlanUpdatable:        true,
-		Plans:                servicePlans,
+		Plans:                plans,
 		Metadata: &domain.ServiceMetadata{
 			DisplayName:         "GaussDB (openGauss)",
-			LongDescription:     "Provisions logical databases (tenants) on a shared openGauss instance. Isolation: per-database connection separation, PRIVATE OBJECT filtering and per-user space quotas.",
 			ProviderDisplayName: "openGauss",
 			DocumentationUrl:    "https://docs.opengauss.org/",
 			SupportUrl:          "https://opengauss.org/",

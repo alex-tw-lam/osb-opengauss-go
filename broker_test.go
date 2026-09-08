@@ -26,17 +26,17 @@ func newTestBroker(t *testing.T) (*Broker, *fakeDB) {
 	db := newFakeDB()
 	plans := []Plan{devPlan, {ID: "gaussdb-pro", Name: "pro", Description: "pro",
 		StorageGB: 200, MaxConnections: 500}}
-	return NewBroker(cfg, plans, NewAdmin(cfg, db), store, slog.Default()), db
+	return NewBroker(cfg, &CatalogData{ServiceConfig: ServiceConfig{ServiceID: "test-service-id"}, Plans: plans}, NewAdmin(cfg, db), store, slog.Default()), db
 }
 
 func provisionDetails(params map[string]any) domain.ProvisionDetails {
 	raw, _ := json.Marshal(params)
-	return domain.ProvisionDetails{ServiceID: serviceID, PlanID: "gaussdb-dev", RawParameters: raw}
+	return domain.ProvisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev", RawParameters: raw}
 }
 
 func bindDetails(params map[string]any) domain.BindDetails {
 	raw, _ := json.Marshal(params)
-	return domain.BindDetails{ServiceID: serviceID, PlanID: "gaussdb-dev", RawParameters: raw}
+	return domain.BindDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev", RawParameters: raw}
 }
 
 func TestProvisionLifecycle(t *testing.T) {
@@ -64,7 +64,7 @@ func TestProvisionLifecycle(t *testing.T) {
 	}
 
 	// Unknown plan and invalid parameters are rejected.
-	if _, err := broker.Provision(ctx, "other", domain.ProvisionDetails{ServiceID: serviceID, PlanID: "nope"}, false); err == nil {
+	if _, err := broker.Provision(ctx, "other", domain.ProvisionDetails{ServiceID: "test-service-id", PlanID: "nope"}, false); err == nil {
 		t.Error("unknown plan must be rejected")
 	}
 	if _, err := broker.Provision(ctx, "other", provisionDetails(map[string]any{"compatibility": "X"}), false); err == nil {
@@ -102,22 +102,22 @@ func TestBindUnbindDeprovision(t *testing.T) {
 	}
 
 	// Deprovision is blocked while a binding exists.
-	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: serviceID, PlanID: "gaussdb-dev"}, false); err == nil {
+	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err == nil {
 		t.Fatal("deprovision with bindings must fail")
 	}
 
-	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: serviceID, PlanID: "gaussdb-dev"}, false); err != nil {
+	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err != nil {
 		t.Fatal(err)
 	}
 	// Unknown unbind reports gone.
-	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: serviceID, PlanID: "gaussdb-dev"}, false); err == nil {
+	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err == nil {
 		t.Fatal("second unbind must fail")
 	}
 
-	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: serviceID, PlanID: "gaussdb-dev"}, false); err != nil {
+	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: serviceID, PlanID: "gaussdb-dev"}, false); err == nil {
+	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err == nil {
 		t.Fatal("second deprovision must fail")
 	}
 }
@@ -130,7 +130,7 @@ func TestUpdateAndRetrieval(t *testing.T) {
 	}
 
 	update := domain.UpdateDetails{
-		ServiceID: serviceID, PlanID: "gaussdb-dev",
+		ServiceID: "test-service-id", PlanID: "gaussdb-dev",
 		RawParameters:  mustJSON(map[string]any{"max_connections": 10}),
 		PreviousValues: domain.PreviousValues{PlanID: "gaussdb-dev"},
 	}
@@ -146,7 +146,7 @@ func TestUpdateAndRetrieval(t *testing.T) {
 		t.Fatalf("update not stored: %+v", params)
 	}
 
-	planChange := domain.UpdateDetails{ServiceID: serviceID, PlanID: "gaussdb-pro",
+	planChange := domain.UpdateDetails{ServiceID: "test-service-id", PlanID: "gaussdb-pro",
 		PreviousValues: domain.PreviousValues{PlanID: "gaussdb-dev"}}
 	if _, err := broker.Update(ctx, iid, planChange, false); err == nil {
 		t.Fatal("plan change must be rejected")

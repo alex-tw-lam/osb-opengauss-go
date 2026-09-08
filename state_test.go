@@ -21,7 +21,7 @@ func newTestStore(t *testing.T) *Store {
 func TestInstanceStateRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 	record := InstanceRecord{
-		ServiceID: serviceID, PlanID: "gaussdb-dev", Database: "gdb_x",
+		ServiceID: "test-service-id", PlanID: "gaussdb-dev", Database: "gdb_x",
 		Params: InstanceParams{PlanID: "gaussdb-dev", Compatibility: "A", MaxConnections: 10},
 	}
 	if err := store.PutInstance("i1", record); err != nil {

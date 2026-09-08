@@ -27,8 +27,8 @@ func main() {
 
 	cfg, err := LoadConfig()
 	must(logger, err, "invalid configuration")
-	plans, err := LoadPlans(cfg.PlansFile)
-	must(logger, err, "invalid plans file")
+	data, err := LoadCatalog(cfg.PlansFile)
+	must(logger, err, "invalid catalog file")
 	store, err := OpenStore(cfg)
 	must(logger, err, "cannot open state file")
 	defer store.Close()
@@ -36,7 +36,7 @@ func main() {
 	server := &http.Server{
 		Addr:              cfg.Host + ":" + strconv.Itoa(cfg.Port),
 		ReadHeaderTimeout: 10 * time.Second,
-		Handler:           newHandler(cfg, NewBroker(cfg, plans, NewAdmin(cfg, NewDB(cfg)), store, logger), logger),
+		Handler:           newHandler(cfg, NewBroker(cfg, data, NewAdmin(cfg, NewDB(cfg)), store, logger), logger),
 	}
 	go func() {
 		logger.Info("broker listening", "address", server.Addr)
