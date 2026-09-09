@@ -29,12 +29,12 @@ func newTestServer(t *testing.T, db *fakeDB) http.Handler {
 	t.Helper()
 	cfg := testConfig()
 	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
-	store, err := OpenStore(cfg)
+	store, err := OpenStore(cfg, NoopEncryptor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	broker := NewBroker(cfg, &CatalogData{ServiceConfig: ServiceConfig{ServiceID: "test-service-id"}, Plans: []Plan{devPlan}}, NewAdmin(cfg, db), store, slog.Default())
+	broker := NewBroker(cfg, &CatalogData{ServiceConfig: ServiceConfig{ServiceID: "aaaa1111-2222-3333-4444-555555555555", Name: "gaussdb", Description: "test"}, Plans: []Plan{devPlan}}, NewAdmin(cfg, db), store, slog.Default())
 	return newHandler(cfg, broker, slog.Default())
 }
 
@@ -75,7 +75,7 @@ func TestCatalogOverHTTP(t *testing.T) {
 
 func TestProvisionOverHTTP(t *testing.T) {
 	server := newTestServer(t, newFakeDB())
-	body := `{"service_id":"` + "test-service-id" + `","plan_id":"gaussdb-dev"}`
+	body := `{"service_id":"` + "aaaa1111-2222-3333-4444-555555555555" + `","plan_id":"bbbb1111-2222-3333-4444-555555555555"}`
 	request := httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", jsonReader(body))
 	request.SetBasicAuth("broker", "x")
 	request.Header.Set("X-Broker-API-Version", "2.16")
@@ -91,7 +91,7 @@ func TestProvisionOverHTTP(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("identical re-provision = %d, want 200", recorder.Code)
 	}
-	conflict := `{"service_id":"` + "test-service-id" + `","plan_id":"gaussdb-dev","parameters":{"max_connections":5}}`
+	conflict := `{"service_id":"` + "aaaa1111-2222-3333-4444-555555555555" + `","plan_id":"bbbb1111-2222-3333-4444-555555555555","parameters":{"max_connections":5}}`
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", jsonReader(conflict))))
 	if recorder.Code != http.StatusConflict {
@@ -99,7 +99,7 @@ func TestProvisionOverHTTP(t *testing.T) {
 	}
 
 	// Unknown plan is 400.
-	bad := `{"service_id":"` + "test-service-id" + `","plan_id":"nope"}`
+	bad := `{"service_id":"` + "aaaa1111-2222-3333-4444-555555555555" + `","plan_id":"nope"}`
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/99999999-9999-9999-9999-999999999999?accepts_incomplete=false", jsonReader(bad))))
 	if recorder.Code != http.StatusBadRequest {

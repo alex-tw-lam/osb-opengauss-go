@@ -18,7 +18,7 @@ func newTestBroker(t *testing.T) (*Broker, *fakeDB) {
 	t.Helper()
 	cfg := testConfig()
 	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
-	store, err := OpenStore(cfg)
+	store, err := OpenStore(cfg, NoopEncryptor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,17 +26,17 @@ func newTestBroker(t *testing.T) (*Broker, *fakeDB) {
 	db := newFakeDB()
 	plans := []Plan{devPlan, {ID: "gaussdb-pro", Name: "pro", Description: "pro",
 		StorageGB: 200, MaxConnections: 500}}
-	return NewBroker(cfg, &CatalogData{ServiceConfig: ServiceConfig{ServiceID: "test-service-id"}, Plans: plans}, NewAdmin(cfg, db), store, slog.Default()), db
+	return NewBroker(cfg, &CatalogData{ServiceConfig: ServiceConfig{ServiceID: "aaaa1111-2222-3333-4444-555555555555"}, Plans: plans}, NewAdmin(cfg, db), store, slog.Default()), db
 }
 
 func provisionDetails(params map[string]any) domain.ProvisionDetails {
 	raw, _ := json.Marshal(params)
-	return domain.ProvisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev", RawParameters: raw}
+	return domain.ProvisionDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555", RawParameters: raw}
 }
 
 func bindDetails(params map[string]any) domain.BindDetails {
 	raw, _ := json.Marshal(params)
-	return domain.BindDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev", RawParameters: raw}
+	return domain.BindDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555", RawParameters: raw}
 }
 
 func TestProvisionLifecycle(t *testing.T) {
@@ -64,7 +64,7 @@ func TestProvisionLifecycle(t *testing.T) {
 	}
 
 	// Unknown plan and invalid parameters are rejected.
-	if _, err := broker.Provision(ctx, "other", domain.ProvisionDetails{ServiceID: "test-service-id", PlanID: "nope"}, false); err == nil {
+	if _, err := broker.Provision(ctx, "other", domain.ProvisionDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "nope"}, false); err == nil {
 		t.Error("unknown plan must be rejected")
 	}
 	if _, err := broker.Provision(ctx, "other", provisionDetails(map[string]any{"compatibility": "X"}), false); err == nil {
@@ -102,22 +102,22 @@ func TestBindUnbindDeprovision(t *testing.T) {
 	}
 
 	// Deprovision is blocked while a binding exists.
-	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err == nil {
+	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555"}, false); err == nil {
 		t.Fatal("deprovision with bindings must fail")
 	}
 
-	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err != nil {
+	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555"}, false); err != nil {
 		t.Fatal(err)
 	}
 	// Unknown unbind reports gone.
-	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err == nil {
+	if _, err := broker.Unbind(ctx, iid, bid, domain.UnbindDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555"}, false); err == nil {
 		t.Fatal("second unbind must fail")
 	}
 
-	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err != nil {
+	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "test-service-id", PlanID: "gaussdb-dev"}, false); err == nil {
+	if _, err := broker.Deprovision(ctx, iid, domain.DeprovisionDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555"}, false); err == nil {
 		t.Fatal("second deprovision must fail")
 	}
 }
@@ -130,9 +130,9 @@ func TestUpdateAndRetrieval(t *testing.T) {
 	}
 
 	update := domain.UpdateDetails{
-		ServiceID: "test-service-id", PlanID: "gaussdb-dev",
+		ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "bbbb1111-2222-3333-4444-555555555555",
 		RawParameters:  mustJSON(map[string]any{"max_connections": 10}),
-		PreviousValues: domain.PreviousValues{PlanID: "gaussdb-dev"},
+		PreviousValues: domain.PreviousValues{PlanID: "bbbb1111-2222-3333-4444-555555555555"},
 	}
 	if _, err := broker.Update(ctx, iid, update, false); err != nil {
 		t.Fatal(err)
@@ -146,8 +146,8 @@ func TestUpdateAndRetrieval(t *testing.T) {
 		t.Fatalf("update not stored: %+v", params)
 	}
 
-	planChange := domain.UpdateDetails{ServiceID: "test-service-id", PlanID: "gaussdb-pro",
-		PreviousValues: domain.PreviousValues{PlanID: "gaussdb-dev"}}
+	planChange := domain.UpdateDetails{ServiceID: "aaaa1111-2222-3333-4444-555555555555", PlanID: "gaussdb-pro",
+		PreviousValues: domain.PreviousValues{PlanID: "bbbb1111-2222-3333-4444-555555555555"}}
 	if _, err := broker.Update(ctx, iid, planChange, false); err == nil {
 		t.Fatal("plan change must be rejected")
 	}

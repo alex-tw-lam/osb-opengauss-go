@@ -1,30 +1,40 @@
 // plans.go loads the service catalog from the plans.toml data file and
-// assembles the Open Service Broker catalog from it. The data file is
-// deployment data; this file is the code that validates it and publishes it.
+// assembles the Open Service Broker catalog from it. Every user-visible
+// field is configurable so multiple broker deployments can offer
+// differently-named services without collisions.
 
 package main
 
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"code.cloudfoundry.org/brokerapi/v13/domain"
 	"github.com/BurntSushi/toml"
 )
 
-// Plan is one quota bundle; the only difference between plans are these numbers.
+// ServiceConfig holds the service-level metadata from the plans file.
+type ServiceConfig struct {
+	ServiceID   string   `toml:"service_id"`
+	Name        string   `toml:"name"`
+	DisplayName string   `toml:"display_name"`
+	Description string   `toml:"description"`
+	Provider    string   `toml:"provider"`
+	DocsURL     string   `toml:"docs_url"`
+	SupportURL  string   `toml:"support_url"`
+	Tags        []string `toml:"tags"`
+}
+
+// Plan is one quota bundle.
 type Plan struct {
 	ID             string `toml:"id"`
 	Name           string `toml:"name"`
+	DisplayName    string `toml:"display_name"`
 	Description    string `toml:"description"`
 	StorageGB      int    `toml:"storage_gb"`
 	MaxConnections int    `toml:"max_connections"`
 	Free           *bool  `toml:"free"`
-}
-
-// ServiceConfig holds the service-level metadata from the plans file.
-type ServiceConfig struct {
-	ServiceID string `toml:"service_id"`
 }
 
 // CatalogData is the parsed contents of plans.toml.
@@ -32,6 +42,8 @@ type CatalogData struct {
 	ServiceConfig
 	Plans []Plan `toml:"plan"`
 }
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // LoadCatalog reads and validates the plans file.
 func LoadCatalog(path string) (*CatalogData, error) {
@@ -43,25 +55,52 @@ func LoadCatalog(path string) (*CatalogData, error) {
 	if err := toml.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("plans file %s is not valid TOML: %w", path, err)
 	}
-	if data.ServiceID == "" {
-		return nil, fmt.Errorf("plans file %s is missing service_id", path)
+	if err := validateService(&data.ServiceConfig, path); err != nil {
+		return nil, err
 	}
-	if len(data.Plans) == 0 {
-		return nil, fmt.Errorf("plans file %s contains no [[plan]] entries", path)
-	}
-	seen := map[string]bool{}
-	for i, plan := range data.Plans {
-		switch {
-		case plan.ID == "" || plan.Name == "" || plan.Description == "":
-			return nil, fmt.Errorf("plan #%d in %s is missing id, name or description", i+1, path)
-		case seen[plan.ID]:
-			return nil, fmt.Errorf("duplicate plan id %q in %s", plan.ID, path)
-		case plan.StorageGB < 1 || plan.MaxConnections < 1:
-			return nil, fmt.Errorf("plan %q in %s: quota values must be positive integers", plan.ID, path)
-		}
-		seen[plan.ID] = true
+	if err := validatePlans(data.Plans, path); err != nil {
+		return nil, err
 	}
 	return &data, nil
+}
+
+func validateService(svc *ServiceConfig, path string) error {
+	switch {
+	case svc.ServiceID == "":
+		return fmt.Errorf("plans file %s is missing service_id", path)
+	case !uuidPattern.MatchString(svc.ServiceID):
+		return fmt.Errorf("service_id %q is not a valid UUID", svc.ServiceID)
+	case svc.Name == "":
+		return fmt.Errorf("plans file %s is missing service name", path)
+	case svc.Description == "":
+		return fmt.Errorf("plans file %s is missing service description", path)
+	}
+	return nil
+}
+
+func validatePlans(plans []Plan, path string) error {
+	if len(plans) == 0 {
+		return fmt.Errorf("plans file %s contains no [[plan]] entries", path)
+	}
+	seenIDs := map[string]bool{}
+	seenNames := map[string]bool{}
+	for i, plan := range plans {
+		switch {
+		case plan.ID == "" || plan.Name == "" || plan.Description == "":
+			return fmt.Errorf("plan #%d in %s is missing id, name or description", i+1, path)
+		case !uuidPattern.MatchString(plan.ID):
+			return fmt.Errorf("plan %q id %q is not a valid UUID", plan.Name, plan.ID)
+		case seenIDs[plan.ID]:
+			return fmt.Errorf("duplicate plan id %q in %s", plan.ID, path)
+		case seenNames[plan.Name]:
+			return fmt.Errorf("duplicate plan name %q in %s", plan.Name, path)
+		case plan.StorageGB < 1 || plan.MaxConnections < 1:
+			return fmt.Errorf("plan %q in %s: quota values must be positive integers", plan.Name, path)
+		}
+		seenIDs[plan.ID] = true
+		seenNames[plan.Name] = true
+	}
+	return nil
 }
 
 // Catalog assembles the /v2/catalog payload.
@@ -69,13 +108,17 @@ func Catalog(data *CatalogData) []domain.Service {
 	plans := make([]domain.ServicePlan, 0, len(data.Plans))
 	for _, plan := range data.Plans {
 		free := plan.Free == nil || *plan.Free
+		displayName := plan.DisplayName
+		if displayName == "" {
+			displayName = plan.Name
+		}
 		plans = append(plans, domain.ServicePlan{
 			ID:          plan.ID,
 			Name:        plan.Name,
 			Description: plan.Description,
 			Free:        &free,
 			Metadata: &domain.ServicePlanMetadata{
-				DisplayName: "GaussDB " + plan.Name,
+				DisplayName: displayName,
 				Bullets: []string{
 					fmt.Sprintf("%d GB storage (tablespace MAXSIZE)", plan.StorageGB),
 					fmt.Sprintf("up to %d concurrent connections", plan.MaxConnections),
@@ -92,21 +135,25 @@ func Catalog(data *CatalogData) []domain.Service {
 			},
 		})
 	}
+	displayName := data.DisplayName
+	if displayName == "" {
+		displayName = data.Name
+	}
 	return []domain.Service{{
 		ID:                   data.ServiceID,
-		Name:                 "gaussdb",
-		Description:          "openGauss/GaussDB logical databases as multi-tenant service instances.",
+		Name:                 data.Name,
+		Description:          data.Description,
 		Bindable:             true,
 		InstancesRetrievable: true,
 		BindingsRetrievable:  true,
-		Tags:                 []string{"gaussdb", "opengauss", "postgresql", "database", "sql"},
+		Tags:                 data.Tags,
 		PlanUpdatable:        true,
 		Plans:                plans,
 		Metadata: &domain.ServiceMetadata{
-			DisplayName:         "GaussDB (openGauss)",
-			ProviderDisplayName: "openGauss",
-			DocumentationUrl:    "https://docs.opengauss.org/",
-			SupportUrl:          "https://opengauss.org/",
+			DisplayName:         displayName,
+			ProviderDisplayName: data.Provider,
+			DocumentationUrl:    data.DocsURL,
+			SupportUrl:          data.SupportURL,
 		},
 	}}
 }

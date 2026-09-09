@@ -17,22 +17,22 @@ func writePlans(t *testing.T, content string) string {
 }
 
 const validPlans = `
-service_id = "test-service-id"
+service_id = "aaaa1111-2222-3333-4444-555555555555"
+name = "gaussdb"
+description = "test service"
 
 [[plan]]
-id = "p1"
+id = "bbbb1111-2222-3333-4444-555555555555"
 name = "one"
 description = "first"
 storage_gb = 5
 max_connections = 20
 
 [[plan]]
-id = "p2"
+id = "cccc1111-2222-3333-4444-555555555555"
 name = "two"
 description = "second"
 storage_gb = 50
-temp_gb = 10
-spill_gb = 10
 max_connections = 100
 free = false
 `
@@ -42,7 +42,7 @@ func TestLoadPlansValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data.Plans) != 2 || data.Plans[0].ID != "p1" || data.Plans[0].StorageGB != 5 {
+	if len(data.Plans) != 2 || data.Plans[0].ID != "bbbb1111-2222-3333-4444-555555555555" || data.Plans[0].StorageGB != 5 {
 		t.Fatalf("unexpected data.Plans: %+v", data.Plans)
 	}
 	if data.Plans[0].Free != nil || data.Plans[1].Free == nil || *data.Plans[1].Free {
@@ -57,14 +57,14 @@ func TestLoadPlansMissing(t *testing.T) {
 }
 
 func TestLoadPlansEmpty(t *testing.T) {
-	_, err := LoadCatalog(writePlans(t, "service_id = \"test-service-id\"\n"))
+	_, err := LoadCatalog(writePlans(t, "service_id = \"aaaa1111-2222-3333-4444-555555555555\"\nname = \"gaussdb\"\ndescription = \"test\"\n"))
 	if err == nil || !strings.Contains(err.Error(), "no [[plan]] entries") {
 		t.Fatalf("expected empty error, got %v", err)
 	}
 }
 
 func TestLoadPlansDuplicateID(t *testing.T) {
-	_, err := LoadCatalog(writePlans(t, strings.Replace(validPlans, `id = "p2"`, `id = "p1"`, 1)))
+	_, err := LoadCatalog(writePlans(t, strings.Replace(validPlans, `id = "cccc1111-2222-3333-4444-555555555555"`, `id = "bbbb1111-2222-3333-4444-555555555555"`, 1)))
 	if err == nil || !strings.Contains(err.Error(), "duplicate plan id") {
 		t.Fatalf("expected duplicate error, got %v", err)
 	}

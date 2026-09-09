@@ -3,9 +3,8 @@
 // scoped user accounts as bindings. Every file owns exactly one job; the
 // responsibility of each is stated at its top.
 //
-// main.go is wiring only: it builds the configuration, plans, state store,
-// admin and broker, exposes /healthz and starts the HTTP server. Every OSB
-// request is answered by brokerapi calling the Broker.
+// main.go is wiring only: it builds the configuration, catalog, encryptor,
+// state store, admin and broker, exposes /healthz and starts the HTTP server.
 package main
 
 import (
@@ -29,7 +28,12 @@ func main() {
 	must(logger, err, "invalid configuration")
 	data, err := LoadCatalog(cfg.PlansFile)
 	must(logger, err, "invalid catalog file")
-	store, err := OpenStore(cfg)
+	encryptor, err := NewEncryptorFromEnv()
+	must(logger, err, "invalid encryption key")
+	if _, ok := encryptor.(NoopEncryptor); ok {
+		logger.Warn("STATE_ENCRYPTION_KEY is not set; binding credentials are stored in plaintext")
+	}
+	store, err := OpenStore(cfg, encryptor)
 	must(logger, err, "cannot open state file")
 	defer store.Close()
 
@@ -53,7 +57,7 @@ func main() {
 	_ = server.Shutdown(shutdownCtx)
 }
 
-// newHandler wires the brokerapi endpoints under / and the health probe.
+// must logs a fatal error and exits.
 func must(logger *slog.Logger, err error, msg string) {
 	if err != nil {
 		logger.Error(msg, "error", err)
@@ -61,6 +65,7 @@ func must(logger *slog.Logger, err error, msg string) {
 	}
 }
 
+// newHandler wires the brokerapi endpoints under / and the health probe.
 func newHandler(cfg *Config, broker *Broker, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", brokerapi.New(broker, logger, brokerapi.BrokerCredentials{

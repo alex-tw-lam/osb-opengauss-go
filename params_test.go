@@ -3,7 +3,7 @@ package main
 import "testing"
 
 var devPlan = Plan{
-	ID: "gaussdb-dev", Name: "dev", Description: "dev",
+	ID: "bbbb1111-2222-3333-4444-555555555555", Name: "dev", Description: "dev",
 	StorageGB: 5, MaxConnections: 20,
 }
 

@@ -19,17 +19,16 @@ import (
 
 // Broker implements the brokerapi ServiceBroker interface for openGauss.
 type Broker struct {
-	cfg       *Config
-	serviceID string
-	plans     []Plan
-	admin     *Admin
-	store     *Store
-	log       *slog.Logger
+	cfg     *Config
+	catalog *CatalogData
+	admin   *Admin
+	store   *Store
+	log     *slog.Logger
 }
 
 // NewBroker wires the broker to its configuration, plans, admin and store.
 func NewBroker(cfg *Config, data *CatalogData, admin *Admin, store *Store, log *slog.Logger) *Broker {
-	return &Broker{cfg: cfg, serviceID: data.ServiceID, plans: data.Plans, admin: admin, store: store, log: log}
+	return &Broker{cfg: cfg, catalog: data, admin: admin, store: store, log: log}
 }
 
 // HealthCheck reports whether the database can be reached.
@@ -38,7 +37,7 @@ func (b *Broker) HealthCheck(ctx context.Context) error {
 }
 
 func (b *Broker) plan(planID string) (Plan, error) {
-	for _, plan := range b.plans {
+	for _, plan := range b.catalog.Plans {
 		if plan.ID == planID {
 			return plan, nil
 		}
@@ -48,12 +47,12 @@ func (b *Broker) plan(planID string) (Plan, error) {
 
 // Services returns the /v2/catalog payload.
 func (b *Broker) Services(context.Context) ([]domain.Service, error) {
-	return Catalog(&CatalogData{ServiceConfig: ServiceConfig{ServiceID: b.serviceID}, Plans: b.plans}), nil
+	return Catalog(b.catalog), nil
 }
 
 // Provision creates a logical database (tenant).
 func (b *Broker) Provision(ctx context.Context, instanceID string, details domain.ProvisionDetails, _ bool) (domain.ProvisionedServiceSpec, error) {
-	if details.ServiceID != b.serviceID {
+	if details.ServiceID != b.catalog.ServiceID {
 		return domain.ProvisionedServiceSpec{}, invalidInput(fmt.Sprintf("unknown service_id %q", details.ServiceID))
 	}
 	plan, err := b.plan(details.PlanID)
@@ -81,7 +80,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 		return domain.ProvisionedServiceSpec{}, mapAdminError(err, apiresponses.ErrInstanceAlreadyExists)
 	}
 	if err := b.store.PutInstance(instanceID, InstanceRecord{
-		ServiceID: b.serviceID, PlanID: spec.PlanID, Database: names.Database, Params: spec,
+		ServiceID: b.catalog.ServiceID, PlanID: spec.PlanID, Database: names.Database, Params: spec,
 	}); err != nil {
 		return domain.ProvisionedServiceSpec{}, err
 	}
@@ -90,7 +89,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 
 // Update changes the connection limit and quotas of an instance.
 func (b *Broker) Update(ctx context.Context, instanceID string, details domain.UpdateDetails, _ bool) (domain.UpdateServiceSpec, error) {
-	if details.ServiceID != b.serviceID {
+	if details.ServiceID != b.catalog.ServiceID {
 		return domain.UpdateServiceSpec{}, invalidInput(fmt.Sprintf("unknown service_id %q", details.ServiceID))
 	}
 	existing := b.store.GetInstance(instanceID)
@@ -132,7 +131,7 @@ func (b *Broker) Update(ctx context.Context, instanceID string, details domain.U
 
 // Deprovision removes the whole tenant; bindings must be gone first.
 func (b *Broker) Deprovision(ctx context.Context, instanceID string, details domain.DeprovisionDetails, _ bool) (domain.DeprovisionServiceSpec, error) {
-	if details.ServiceID != b.serviceID {
+	if details.ServiceID != b.catalog.ServiceID {
 		return domain.DeprovisionServiceSpec{}, invalidInput(fmt.Sprintf("unknown service_id %q", details.ServiceID))
 	}
 	instance := b.store.GetInstance(instanceID)
@@ -157,7 +156,7 @@ func (b *Broker) Deprovision(ctx context.Context, instanceID string, details dom
 
 // Bind creates a login user scoped to one logical database.
 func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details domain.BindDetails, _ bool) (domain.Binding, error) {
-	if details.ServiceID != b.serviceID {
+	if details.ServiceID != b.catalog.ServiceID {
 		return domain.Binding{}, invalidInput(fmt.Sprintf("unknown service_id %q", details.ServiceID))
 	}
 	instance := b.store.GetInstance(instanceID)
@@ -192,9 +191,7 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 		return domain.Binding{}, mapAdminError(err, apiresponses.ErrBindingAlreadyExists)
 	}
 	credentials := b.credentials(names.Database, username, password)
-	if err := b.store.PutBinding(bindingID, BindingRecord{
-		InstanceID: instanceID, Username: username, Params: spec, Credentials: credentials,
-	}); err != nil {
+	if err := b.store.PutBinding(bindingID, username, instanceID, spec, credentials); err != nil {
 		return domain.Binding{}, err
 	}
 	return domain.Binding{Credentials: credentials}, nil
@@ -202,7 +199,7 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 
 // Unbind removes the binding user.
 func (b *Broker) Unbind(ctx context.Context, instanceID, bindingID string, details domain.UnbindDetails, _ bool) (domain.UnbindSpec, error) {
-	if details.ServiceID != b.serviceID {
+	if details.ServiceID != b.catalog.ServiceID {
 		return domain.UnbindSpec{}, invalidInput(fmt.Sprintf("unknown service_id %q", details.ServiceID))
 	}
 	instance := b.store.GetInstance(instanceID)

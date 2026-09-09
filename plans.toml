@@ -3,28 +3,44 @@
 # This file is DATA: each deployment carries its own copy.
 # Changes take effect on broker restart.
 #
-# The service_id is referenced by platforms once instances exist,
-# so never change it after the first provision.
+# ALL fields are configurable so multiple broker deployments can offer
+# differently-named services on the same platform without collisions.
+# The service_id and plan ids are UUIDs and are referenced by platforms
+# once instances exist - never change them after the first provision.
 
-service_id = "4c6f6a1e-0f5a-4a5b-9d7e-2f8b3a1c5e01"
+# ── Service-level configuration ─────────────────────────────────────────
+service_id   = "4c6f6a1e-0f5a-4a5b-9d7e-2f8b3a1c5e01"  # UUID, unique per deployment
+name         = "gaussdb-team-a"
+display_name = "GaussDB (Team A)"
+description  = "openGauss logical databases for Team A"
+provider     = "openGauss"
+docs_url     = "https://docs.opengauss.org/"
+support_url  = "https://opengauss.org/"
+tags         = ["gaussdb", "opengauss", "postgresql", "database", "sql"]
+
+# ── Plans ────────────────────────────────────────────────────────────────
+# Each plan id is a UUID, unique across all deployments.
 
 [[plan]]
-id = "dev"
-name = "dev"
+id          = "11111111-1111-1111-1111-111111111111"
+name        = "dev"
+display_name = "Dev"
 description = "Small logical database for development and CI."
-storage_gb = 5        # tablespace MAXSIZE
-max_connections = 20  # database CONNECTION LIMIT
+storage_gb     = 5        # tablespace MAXSIZE
+max_connections = 20      # database CONNECTION LIMIT
 
 [[plan]]
-id = "standard"
-name = "standard"
+id          = "22222222-2222-2222-2222-222222222222"
+name        = "standard"
+display_name = "Standard"
 description = "Standard logical database for production workloads."
-storage_gb = 50
+storage_gb     = 50
 max_connections = 100
 
 [[plan]]
-id = "pro"
-name = "pro"
+id          = "33333333-3333-3333-3333-333333333333"
+name        = "pro"
+display_name = "Pro"
 description = "Large logical database with high connection numbers."
-storage_gb = 200
+storage_gb     = 200
 max_connections = 500

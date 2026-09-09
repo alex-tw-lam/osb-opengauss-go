@@ -10,7 +10,7 @@ func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	cfg := testConfig()
 	cfg.StatePath = filepath.Join(t.TempDir(), "state.db")
-	store, err := OpenStore(cfg)
+	store, err := OpenStore(cfg, NoopEncryptor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,8 +21,8 @@ func newTestStore(t *testing.T) *Store {
 func TestInstanceStateRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 	record := InstanceRecord{
-		ServiceID: "test-service-id", PlanID: "gaussdb-dev", Database: "gdb_x",
-		Params: InstanceParams{PlanID: "gaussdb-dev", Compatibility: "A", MaxConnections: 10},
+		ServiceID: "svc-1", PlanID: "plan-1", Database: "gdb_x",
+		Params: InstanceParams{PlanID: "plan-1", Compatibility: "A", MaxConnections: 10},
 	}
 	if err := store.PutInstance("i1", record); err != nil {
 		t.Fatal(err)
@@ -31,7 +31,6 @@ func TestInstanceStateRoundTrip(t *testing.T) {
 	if got == nil || got.Database != "gdb_x" || got.Params.Compatibility != "A" || got.Params.MaxConnections != 10 {
 		t.Fatalf("round trip wrong: %+v", got)
 	}
-	// An update over the same key is an upsert.
 	record.Params.MaxConnections = 5
 	_ = store.PutInstance("i1", record)
 	if got := store.GetInstance("i1"); got.Params.MaxConnections != 5 {
@@ -47,12 +46,8 @@ func TestInstanceStateRoundTrip(t *testing.T) {
 
 func TestBindingStateRoundTrip(t *testing.T) {
 	store := newTestStore(t)
-	record := BindingRecord{
-		InstanceID: "i1", Username: "gdbu_b",
-		Params:      BindingParams{Name: "test"},
-		Credentials: map[string]string{"uri": "gaussdb://x", "password": "p"},
-	}
-	if err := store.PutBinding("b1", record); err != nil {
+	creds := map[string]string{"uri": "gaussdb://x", "password": "p"}
+	if err := store.PutBinding("b1", "gdbu_b", "i1", BindingParams{Name: "test"}, creds); err != nil {
 		t.Fatal(err)
 	}
 	got := store.GetBinding("b1")
@@ -71,10 +66,40 @@ func TestBindingStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBindingCredentialsEncrypted(t *testing.T) {
+	cfg := testConfig()
+	cfg.StatePath = filepath.Join(t.TempDir(), "enc.db")
+	key := [32]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+	store, err := OpenStore(cfg, NewGCMEncryptor(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	creds := map[string]string{"password": "super-secret"}
+	if err := store.PutBinding("b1", "u1", "i1", BindingParams{}, creds); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw string
+	if err := store.db.Raw("SELECT credentials FROM binding_records WHERE binding_id = 'b1'").Scan(&raw).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "super-secret") {
+		t.Fatalf("credentials stored in plaintext: %q", raw)
+	}
+
+	got := store.GetBinding("b1")
+	if got == nil || got.Credentials["password"] != "super-secret" {
+		t.Fatalf("decrypt round trip failed: %+v", got)
+	}
+}
+
 func TestStateDSNValidation(t *testing.T) {
 	cfg := testConfig()
 	cfg.StateDSN = "mysql://nope"
-	_, err := OpenStore(cfg)
+	_, err := OpenStore(cfg, NoopEncryptor{})
 	if err == nil || !strings.Contains(err.Error(), "STATE_DSN") {
 		t.Fatalf("expected STATE_DSN error, got %v", err)
 	}
