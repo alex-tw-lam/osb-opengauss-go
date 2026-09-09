@@ -1,11 +1,13 @@
 // config.go is the only file that knows environment variable names.
-// It parses them once into a Config and nothing else.
+// It parses them once into a Config and rejects values that must not
+// reach the database layer (bad identifiers, missing password).
 
 package main
 
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -56,7 +58,7 @@ func LoadConfig() (*Config, error) {
 		TemplateDir:      os.Getenv("TEMPLATE_DIR"),
 		TablespacePrefix: env("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "broker"),
 		BrokerUsername:   env("BROKER_USERNAME", "broker"),
-		BrokerPassword:   env("BROKER_PASSWORD", "broker-dev-password"),
+		BrokerPassword:   os.Getenv("BROKER_PASSWORD"),
 		StatePath:        env("STATE_DB_PATH", "osb-opengauss-state.db"),
 		StateDSN:         os.Getenv("STATE_DSN"),
 		NamePrefix:       env("GAUSSDB_NAME_PREFIX", "gdb"),
@@ -67,8 +69,27 @@ func LoadConfig() (*Config, error) {
 	if strings.Contains(cfg.TablespacePrefix, "/") {
 		return nil, fmt.Errorf("GAUSSDB_TABLESPACE_LOCATION_PREFIX must be a single path segment")
 	}
+	if !locationPrefixPattern.MatchString(cfg.TablespacePrefix) {
+		return nil, fmt.Errorf("GAUSSDB_TABLESPACE_LOCATION_PREFIX must be 1-32 letters, digits, hyphens or underscores")
+	}
+	if !namePrefixPattern.MatchString(cfg.NamePrefix) {
+		return nil, fmt.Errorf("GAUSSDB_NAME_PREFIX must be 1-30 characters: a lowercase letter, then lowercase letters, digits or underscores")
+	}
+	if cfg.BrokerPassword == "" {
+		return nil, fmt.Errorf("BROKER_PASSWORD must be set; the broker refuses to start with no API password")
+	}
 	return cfg, nil
 }
+
+// namePrefixPattern bounds GAUSSDB_NAME_PREFIX: 1-30 chars, starting with a
+// lowercase letter. 30 leaves room for the separator, the name and the
+// "_grp" suffix inside openGauss's 63-character identifier limit.
+var namePrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,29}$`)
+
+// locationPrefixPattern bounds GAUSSDB_TABLESPACE_LOCATION_PREFIX to plain
+// path characters: SQL templates splice it into paths, so quotes and
+// semicolons must never reach it.
+var locationPrefixPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {

@@ -1,12 +1,15 @@
 // state.go is the broker's memory: instance and binding records kept in a
 // SQL database through GORM. Binding credentials are encrypted at rest with
-// AES-256-GCM when STATE_ENCRYPTION_KEY is set; the SQLite file is
-// restricted to 0600.
+// AES-256-GCM when STATE_ENCRYPTION_KEY is set and stored base64-encoded so
+// the column is valid text in every backend; the SQLite file is 0600.
+// Every read returns an error instead of panicking: a state database that
+// cannot be read is a hard failure, never an invisible record.
 
 package main
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +28,10 @@ type InstanceRecord struct {
 	InstanceID string `gorm:"primaryKey"`
 	ServiceID  string
 	PlanID     string
-	Database   string
-	Params     InstanceParams `gorm:"serializer:json"`
+	// Database is a human-readable projection for operators inspecting the
+	// state store during an incident; the broker itself recomputes names.
+	Database string
+	Params   InstanceParams `gorm:"serializer:json"`
 }
 
 // BindingRecord is what the broker remembers about one binding. Credentials
@@ -36,7 +41,7 @@ type BindingRecord struct {
 	InstanceID  string
 	Username    string
 	Params      BindingParams `gorm:"serializer:json"`
-	Credentials string        // encrypted JSON; decrypted by the Store
+	Credentials string        // base64-encoded encrypted JSON; decoded by the Store
 }
 
 // Store wraps the state database and its encryptor.
@@ -131,16 +136,16 @@ func (s *Store) PutInstance(instanceID string, record InstanceRecord) error {
 }
 
 // GetInstance returns the record of an instance, or nil if unknown.
-func (s *Store) GetInstance(instanceID string) *InstanceRecord {
+func (s *Store) GetInstance(instanceID string) (*InstanceRecord, error) {
 	var record InstanceRecord
 	err := s.db.First(&record, "instance_id = ?", instanceID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		panic(fmt.Sprintf("state database error: %v", err))
+		return nil, fmt.Errorf("cannot read instance %s: %w", instanceID, err)
 	}
-	return &record
+	return &record, nil
 }
 
 // DeleteInstance forgets an instance.
@@ -163,7 +168,7 @@ func (s *Store) PutBinding(bindingID string, username, instanceID string, params
 		InstanceID:  instanceID,
 		Username:    username,
 		Params:      params,
-		Credentials: string(encrypted),
+		Credentials: base64.StdEncoding.EncodeToString(encrypted),
 	}
 	err = s.db.First(&BindingRecord{}, "binding_id = ?", bindingID).Error
 	switch {
@@ -187,22 +192,18 @@ type BindingInfo struct {
 }
 
 // GetBinding returns the decrypted binding, or nil if unknown.
-func (s *Store) GetBinding(bindingID string) *BindingInfo {
+func (s *Store) GetBinding(bindingID string) (*BindingInfo, error) {
 	var record BindingRecord
 	err := s.db.First(&record, "binding_id = ?", bindingID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		panic(fmt.Sprintf("state database error: %v", err))
+		return nil, fmt.Errorf("cannot read binding %s: %w", bindingID, err)
 	}
-	plain, err := s.encryptor.Decrypt([]byte(record.Credentials))
+	creds, err := s.decryptCredentials(record.BindingID, record.Credentials)
 	if err != nil {
-		panic(fmt.Sprintf("cannot decrypt credentials for binding %s: %v", bindingID, err))
-	}
-	var creds map[string]string
-	if err := json.Unmarshal(plain, &creds); err != nil {
-		panic(fmt.Sprintf("corrupted credentials for binding %s: %v", bindingID, err))
+		return nil, err
 	}
 	return &BindingInfo{
 		BindingID:   record.BindingID,
@@ -210,7 +211,7 @@ func (s *Store) GetBinding(bindingID string) *BindingInfo {
 		Username:    record.Username,
 		Params:      record.Params,
 		Credentials: creds,
-	}
+	}, nil
 }
 
 // DeleteBinding forgets a binding.
@@ -219,18 +220,18 @@ func (s *Store) DeleteBinding(bindingID string) error {
 }
 
 // BindingsForInstance returns every binding that still exists on an instance.
-func (s *Store) BindingsForInstance(instanceID string) []BindingInfo {
+// A record that cannot be decrypted is an error, not an invisible binding:
+// deprovisioning must fail rather than silently skip it.
+func (s *Store) BindingsForInstance(instanceID string) ([]BindingInfo, error) {
 	var records []BindingRecord
-	_ = s.db.Where("instance_id = ?", instanceID).Find(&records).Error
+	if err := s.db.Where("instance_id = ?", instanceID).Find(&records).Error; err != nil {
+		return nil, fmt.Errorf("cannot list bindings of instance %s: %w", instanceID, err)
+	}
 	result := make([]BindingInfo, 0, len(records))
 	for _, record := range records {
-		plain, err := s.encryptor.Decrypt([]byte(record.Credentials))
+		creds, err := s.decryptCredentials(record.BindingID, record.Credentials)
 		if err != nil {
-			continue // skip unreadable records rather than crashing the list
-		}
-		var creds map[string]string
-		if err := json.Unmarshal(plain, &creds); err != nil {
-			continue
+			return nil, err
 		}
 		result = append(result, BindingInfo{
 			BindingID:   record.BindingID,
@@ -240,5 +241,22 @@ func (s *Store) BindingsForInstance(instanceID string) []BindingInfo {
 			Credentials: creds,
 		})
 	}
-	return result
+	return result, nil
+}
+
+// decryptCredentials turns the stored column value back into a credential map.
+func (s *Store) decryptCredentials(bindingID, stored string) (map[string]string, error) {
+	ciphertext, err := base64.StdEncoding.DecodeString(stored)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode credentials of binding %s: %w", bindingID, err)
+	}
+	plain, err := s.encryptor.Decrypt(ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decrypt credentials of binding %s: %w", bindingID, err)
+	}
+	var creds map[string]string
+	if err := json.Unmarshal(plain, &creds); err != nil {
+		return nil, fmt.Errorf("corrupted credentials of binding %s: %w", bindingID, err)
+	}
+	return creds, nil
 }

@@ -30,8 +30,8 @@ type BindingParams struct {
 	Name string `json:"name"`
 }
 
-// RawParameters converts the raw JSON parameters of a request into a map.
-func RawParameters(raw json.RawMessage) (map[string]any, error) {
+// rawParameters converts the raw JSON parameters of a request into a map.
+func rawParameters(raw json.RawMessage) (map[string]any, error) {
 	if len(raw) == 0 {
 		return map[string]any{}, nil
 	}
@@ -92,16 +92,10 @@ func boundedInt(params map[string]any, key string, fallback, maximum int) (int, 
 	if !ok {
 		return fallback, nil
 	}
-	// JSON numbers decode as float64; whole numbers of any numeric type are fine.
-	switch v := raw.(type) {
-	case int:
-		if v >= 1 && v <= maximum {
-			return v, nil
-		}
-	case float64:
-		if v == float64(int(v)) && v >= 1 && v <= float64(maximum) {
-			return int(v), nil
-		}
+	// JSON numbers decode as float64, so one type assertion covers them all.
+	v, isNumber := raw.(float64)
+	if isNumber && v == float64(int(v)) && v >= 1 && v <= float64(maximum) {
+		return int(v), nil
 	}
 	return 0, fmt.Errorf("'%s' must be a whole number between 1 and %d", key, maximum)
 }

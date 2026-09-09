@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"code.cloudfoundry.org/brokerapi/v13/domain"
@@ -171,4 +172,75 @@ func TestUpdateAndRetrieval(t *testing.T) {
 func mustJSON(value any) json.RawMessage {
 	raw, _ := json.Marshal(value)
 	return raw
+}
+
+// A binding's own name must never change which database it joins.
+func TestBindNameDoesNotRedirectInstance(t *testing.T) {
+	broker, db := newTestBroker(t)
+	ctx := context.Background()
+	if _, err := broker.Provision(ctx, iid, provisionDetails(map[string]any{"name": "orders"}), false); err != nil {
+		t.Fatal(err)
+	}
+
+	binding, err := broker.Bind(ctx, iid, bid, bindDetails(map[string]any{"name": "payments"}), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := binding.Credentials.(map[string]string)
+	if credentials["database"] != "gdb_orders" {
+		t.Fatalf("binding must join the provisioned database, got %q", credentials["database"])
+	}
+	if credentials["username"] != "gdbu_payments" {
+		t.Fatalf("binding name should name the user, got %q", credentials["username"])
+	}
+	joined := false
+	for _, s := range db.statements["postgres"] {
+		if strings.HasPrefix(s, "GRANT \"gdb_orders_grp\" TO \"gdbu_payments\"") {
+			joined = true
+		}
+	}
+	if !joined {
+		t.Fatal("user was not granted the instance's group role")
+	}
+}
+
+// An update must not change immutable fields, even if they are sent again.
+func TestUpdateNameIsIgnored(t *testing.T) {
+	broker, db := newTestBroker(t)
+	ctx := context.Background()
+	if _, err := broker.Provision(ctx, iid, provisionDetails(
+		map[string]any{"name": "orders", "compatibility": "A"}), false); err != nil {
+		t.Fatal(err)
+	}
+
+	update := domain.UpdateDetails{
+		ServiceID: "aaaa1111-2222-3333-4444-555555555555",
+		PlanID:    "bbbb1111-2222-3333-4444-555555555555",
+		RawParameters: mustJSON(map[string]any{
+			"max_connections": 10, "name": "other-tenant", "compatibility": "B", "encoding": "GBK"}),
+		PreviousValues: domain.PreviousValues{PlanID: "bbbb1111-2222-3333-4444-555555555555"},
+	}
+	if _, err := broker.Update(ctx, iid, update, false); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range db.statements["postgres"] {
+		if strings.HasPrefix(s, "ALTER DATABASE \"gdb_orders\" CONNECTION LIMIT = 10") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("update must alter the provisioned database")
+	}
+	instance, err := broker.GetInstance(ctx, iid, domain.FetchInstanceDetails{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := instance.Parameters.(InstanceParams)
+	if params.Name != "orders" || params.Compatibility != "A" || params.Encoding != "UTF8" {
+		t.Fatalf("update changed immutable parameters: %+v", params)
+	}
+	if params.MaxConnections != 10 {
+		t.Fatalf("update did not change the quota: %+v", params)
+	}
 }

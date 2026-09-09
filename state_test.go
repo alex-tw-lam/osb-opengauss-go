@@ -27,19 +27,24 @@ func TestInstanceStateRoundTrip(t *testing.T) {
 	if err := store.PutInstance("i1", record); err != nil {
 		t.Fatal(err)
 	}
-	got := store.GetInstance("i1")
+	got, err := store.GetInstance("i1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got == nil || got.Database != "gdb_x" || got.Params.Compatibility != "A" || got.Params.MaxConnections != 10 {
 		t.Fatalf("round trip wrong: %+v", got)
 	}
 	record.Params.MaxConnections = 5
 	_ = store.PutInstance("i1", record)
-	if got := store.GetInstance("i1"); got.Params.MaxConnections != 5 {
+	got, _ = store.GetInstance("i1")
+	if got.Params.MaxConnections != 5 {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	if err := store.DeleteInstance("i1"); err != nil {
 		t.Fatal(err)
 	}
-	if store.GetInstance("i1") != nil {
+	got, _ = store.GetInstance("i1")
+	if got != nil {
 		t.Fatal("deleted instance still found")
 	}
 }
@@ -50,18 +55,25 @@ func TestBindingStateRoundTrip(t *testing.T) {
 	if err := store.PutBinding("b1", "gdbu_b", "i1", BindingParams{Name: "test"}, creds); err != nil {
 		t.Fatal(err)
 	}
-	got := store.GetBinding("b1")
+	got, err := store.GetBinding("b1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got == nil || got.Params.Name != "test" || got.Credentials["uri"] != "gaussdb://x" {
 		t.Fatalf("round trip wrong: %+v", got)
 	}
-	if list := store.BindingsForInstance("i1"); len(list) != 1 || list[0].Username != "gdbu_b" {
+	list, err := store.BindingsForInstance("i1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Username != "gdbu_b" {
 		t.Fatalf("BindingsForInstance wrong: %+v", list)
 	}
-	if list := store.BindingsForInstance("other"); len(list) != 0 {
+	if list, _ := store.BindingsForInstance("other"); len(list) != 0 {
 		t.Fatalf("expected no bindings, got %+v", list)
 	}
 	_ = store.DeleteBinding("b1")
-	if store.GetBinding("b1") != nil {
+	if got, _ := store.GetBinding("b1"); got != nil {
 		t.Fatal("deleted binding still found")
 	}
 }
@@ -90,9 +102,40 @@ func TestBindingCredentialsEncrypted(t *testing.T) {
 		t.Fatalf("credentials stored in plaintext: %q", raw)
 	}
 
-	got := store.GetBinding("b1")
+	got, err := store.GetBinding("b1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got == nil || got.Credentials["password"] != "super-secret" {
 		t.Fatalf("decrypt round trip failed: %+v", got)
+	}
+}
+
+// A key rotation must surface as an error, never as a panic or a missing binding.
+func TestUndecryptableBindingFailsClosed(t *testing.T) {
+	cfg := testConfig()
+	cfg.StatePath = filepath.Join(t.TempDir(), "rotated.db")
+	first := [32]byte{1}
+	second := [32]byte{2}
+	store, err := OpenStore(cfg, NewGCMEncryptor(first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBinding("b1", "u1", "i1", BindingParams{}, map[string]string{"password": "p"}); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	store, err = OpenStore(cfg, NewGCMEncryptor(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if _, err := store.GetBinding("b1"); err == nil {
+		t.Fatal("reading with the wrong key must fail")
+	}
+	if _, err := store.BindingsForInstance("i1"); err == nil {
+		t.Fatal("listing with the wrong key must fail")
 	}
 }
 

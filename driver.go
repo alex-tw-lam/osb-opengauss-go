@@ -36,9 +36,11 @@ func (g *gaussdbDB) Exec(ctx context.Context, database string, statements ...str
 		return err
 	}
 	defer conn.Close(context.Background())
-	for _, statement := range statements {
+	// The failing statement is never included in the error: templates embed
+	// generated passwords, which must not reach logs or HTTP responses.
+	for i, statement := range statements {
 		if _, err := conn.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("%s: %w", statement, err)
+			return fmt.Errorf("statement %d of %d failed: %w", i+1, len(statements), err)
 		}
 	}
 	return nil

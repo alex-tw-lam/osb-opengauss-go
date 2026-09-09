@@ -1,6 +1,6 @@
-// templates.go loads SQL templates (embedded defaults or from TEMPLATE_DIR)
-// and executes them against the target database. The templates define every
-// SQL statement the broker runs; the Go code only prepares the variables.
+// templates.go loads SQL templates (embedded defaults or from TEMPLATE_DIR),
+// renders them with the prepared variables and splits them into statements.
+// Execution against a database happens in gaussdb.go.
 
 package main
 
@@ -24,7 +24,7 @@ var templateDir string
 
 // TemplateVars holds every value that can appear in a SQL template.
 // Identifiers are pre-quoted (double quotes), literals are pre-quoted
-// (single quotes) — templates use them as-is.
+// (single quotes) - templates use them as-is.
 type TemplateVars struct {
 	// Quoted identifiers ({{.Database}}, {{.GroupRole}}, etc.)
 	Database   string

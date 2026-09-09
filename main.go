@@ -29,6 +29,9 @@ func main() {
 	data, err := LoadCatalog(cfg.PlansFile)
 	must(logger, err, "invalid catalog file")
 	templateDir = cfg.TemplateDir
+	if cfg.DBSSLMode == "disable" {
+		logger.Warn("GAUSSDB_SSLMODE is disable; the admin password and binding credentials cross the network unencrypted")
+	}
 
 	encryptor, err := NewEncryptorFromEnv()
 	must(logger, err, "invalid encryption key")

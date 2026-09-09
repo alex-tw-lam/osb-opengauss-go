@@ -1,10 +1,24 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 var devPlan = Plan{
 	ID: "bbbb1111-2222-3333-4444-555555555555", Name: "dev", Description: "dev",
 	StorageGB: 5, MaxConnections: 20,
+}
+
+// jsonParams mirrors the production path: request parameters are JSON, so
+// numbers always decode as float64.
+func jsonParams(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	params, err := rawParameters(json.RawMessage(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return params
 }
 
 func TestResolveInstanceParamsDefaults(t *testing.T) {
@@ -18,9 +32,8 @@ func TestResolveInstanceParamsDefaults(t *testing.T) {
 }
 
 func TestResolveInstanceParamsValidOverrides(t *testing.T) {
-	spec, err := ResolveInstanceParams(devPlan, map[string]any{
-		"compatibility": "A", "encoding": "GBK", "max_connections": 10, "storage_gb": 2,
-	})
+	spec, err := ResolveInstanceParams(devPlan, jsonParams(t,
+		`{"compatibility":"A","encoding":"GBK","max_connections":10,"storage_gb":2}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,14 +43,14 @@ func TestResolveInstanceParamsValidOverrides(t *testing.T) {
 }
 
 func TestResolveInstanceParamsRejectsBadValues(t *testing.T) {
-	cases := map[string]map[string]any{
-		"compatibility": {"compatibility": "ORACLE"},
-		"encoding":      {"encoding": "UTF16"},
-		"exceed":        {"storage_gb": 999},
-		"fractional":    {"max_connections": 1.5},
+	cases := map[string]string{
+		"compatibility": `{"compatibility":"ORACLE"}`,
+		"encoding":      `{"encoding":"UTF16"}`,
+		"exceed":        `{"storage_gb":999}`,
+		"fractional":    `{"max_connections":1.5}`,
 	}
-	for name, params := range cases {
-		if _, err := ResolveInstanceParams(devPlan, params); err == nil {
+	for name, raw := range cases {
+		if _, err := ResolveInstanceParams(devPlan, jsonParams(t, raw)); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,7 @@ type fakeDB struct {
 	roles       map[string]bool
 	tablespaces map[string]bool
 	pingErr     error
+	failOn      string // any statement containing this text fails
 }
 
 func newFakeDB() *fakeDB {
@@ -28,7 +30,12 @@ func (f *fakeDB) Exec(_ context.Context, database string, statements ...string) 
 	if database == "" {
 		database = "postgres"
 	}
-	f.statements[database] = append(f.statements[database], statements...)
+	for _, statement := range statements {
+		if f.failOn != "" && strings.Contains(statement, f.failOn) {
+			return errors.New("injected failure on: " + f.failOn)
+		}
+		f.statements[database] = append(f.statements[database], statement)
+	}
 	return nil
 }
 
@@ -113,6 +120,45 @@ func TestUserNaming(t *testing.T) {
 	uc := UserFor("bid1", "gdb", "reporting")
 	if uc != "gdbu_reporting" {
 		t.Errorf("custom: got %s, want gdbu_reporting", uc)
+	}
+}
+
+// A long custom name must not push any derived identifier past 63 characters.
+func TestLongNameStaysWithinIdentifierLimit(t *testing.T) {
+	long := strings.Repeat("x", 100)
+	n := NamesFor("abc", "gdb", long)
+	if len(n.Database) > 63 || len(n.GroupRole) > 63 || len(n.Tablespace) > 63 {
+		t.Fatalf("identifier exceeds 63 chars: %+v", n)
+	}
+	if u := UserFor("bid1", "gdb", long); len(u) > 63 {
+		t.Fatalf("user name exceeds 63 chars: %s", u)
+	}
+}
+
+// A provision that fails partway must roll back what it already created.
+func TestProvisionRollsBackPartialCreation(t *testing.T) {
+	fdb := newFakeDB()
+	fdb.failOn = "CREATE TABLESPACE"
+	admin := NewAdmin(testConfig(), fdb)
+	if err := admin.Provision(context.Background(), names, instanceParams()); err == nil {
+		t.Fatal("provision must fail when a statement fails")
+	}
+	// The rollback must have dropped the role it managed to create.
+	if !containsStatement(fdb.statements["postgres"], "DROP ROLE IF EXISTS "+quoteIdent(names.GroupRole)) {
+		t.Fatal("rollback did not drop the partially created role")
+	}
+}
+
+// A bind that fails partway must roll back the user it already created.
+func TestBindRollsBackPartialCreation(t *testing.T) {
+	fdb := newFakeDB()
+	fdb.failOn = "GRANT"
+	admin := NewAdmin(testConfig(), fdb)
+	if _, err := admin.Bind(context.Background(), names, "gdbu_user1"); err == nil {
+		t.Fatal("bind must fail when a statement fails")
+	}
+	if !containsStatement(fdb.statements["postgres"], "DROP USER IF EXISTS \"gdbu_user1\"") {
+		t.Fatal("rollback did not drop the partially created user")
 	}
 }
 

@@ -49,8 +49,9 @@ func sanitizeName(name string, maxLen int) string {
 }
 
 func NamesFor(instanceID, prefix, customName string) Names {
+	// The budget keeps prefix + "_" + name + "_grp" within maxIdentifier.
 	var base string
-	if name := sanitizeName(customName, maxIdentifier-len(prefix)-4); name != "" {
+	if name := sanitizeName(customName, maxIdentifier-len(prefix)-5); name != "" {
 		base = prefix + "_" + name
 	} else {
 		base = prefix + "_" + shortHash(instanceID)
@@ -59,8 +60,9 @@ func NamesFor(instanceID, prefix, customName string) Names {
 }
 
 func UserFor(bindingID, prefix, customName string) string {
+	// The budget keeps prefix + "u_" + name within maxIdentifier.
 	var base string
-	if name := sanitizeName(customName, maxIdentifier-len(prefix)-1); name != "" {
+	if name := sanitizeName(customName, maxIdentifier-len(prefix)-2); name != "" {
 		base = prefix + "u_" + name
 	} else {
 		base = prefix + "u_" + shortHash(bindingID)
@@ -127,9 +129,14 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 	vars.GroupPassword = quoteLiteral(randomPassword())
 
 	if err := a.execTemplate(ctx, "opengauss/admin-db/provision.sql", a.cfg.DBAdminName, vars); err != nil {
+		_ = a.Deprovision(ctx, names) // best-effort rollback of partial creation
 		return err
 	}
-	return a.execTemplate(ctx, "opengauss/tenant-db/provision.sql", names.Database, vars)
+	if err := a.execTemplate(ctx, "opengauss/tenant-db/provision.sql", names.Database, vars); err != nil {
+		_ = a.Deprovision(ctx, names) // best-effort rollback of partial creation
+		return err
+	}
+	return nil
 }
 
 // Bind creates a login user via templates and returns its password.
@@ -144,9 +151,11 @@ func (a *Admin) Bind(ctx context.Context, names Names, username string) (string,
 	vars.Password = quoteLiteral(password)
 
 	if err := a.execTemplate(ctx, "opengauss/admin-db/bind.sql", a.cfg.DBAdminName, vars); err != nil {
+		_ = a.Unbind(ctx, names, username) // best-effort rollback of partial creation
 		return "", err
 	}
 	if err := a.execTemplate(ctx, "opengauss/tenant-db/bind.sql", names.Database, vars); err != nil {
+		_ = a.Unbind(ctx, names, username) // best-effort rollback of partial creation
 		return "", err
 	}
 	return password, nil
@@ -208,7 +217,10 @@ func randomPassword() string {
 	for {
 		password := make([]byte, 28)
 		for i := range password {
-			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(passwordAlphabet))))
+			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(passwordAlphabet))))
+			if err != nil {
+				panic(err) // a failed system entropy source is unrecoverable
+			}
 			password[i] = passwordAlphabet[n.Int64()]
 		}
 		var hasUpper, hasLower, hasDigit, hasSpecial bool
