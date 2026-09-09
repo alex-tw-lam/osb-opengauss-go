@@ -28,6 +28,8 @@ func main() {
 	must(logger, err, "invalid configuration")
 	data, err := LoadCatalog(cfg.PlansFile)
 	must(logger, err, "invalid catalog file")
+	templateDir = cfg.TemplateDir
+
 	encryptor, err := NewEncryptorFromEnv()
 	must(logger, err, "invalid encryption key")
 	if _, ok := encryptor.(NoopEncryptor); ok {

@@ -21,8 +21,8 @@ type Config struct {
 	DBAdminName      string
 	DBSSLMode        string
 	DBConnTimeout    int
-	Tablespaces      []string
 	PlansFile        string
+	TemplateDir      string
 	TablespacePrefix string
 
 	// Basic auth the platform must use to talk to this broker.
@@ -53,6 +53,7 @@ func LoadConfig() (*Config, error) {
 		DBSSLMode:        env("GAUSSDB_SSLMODE", "disable"),
 		DBConnTimeout:    envInt("GAUSSDB_CONNECT_TIMEOUT", 10),
 		PlansFile:        env("GAUSSDB_PLANS_FILE", "plans.toml"),
+		TemplateDir:      os.Getenv("TEMPLATE_DIR"),
 		TablespacePrefix: env("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "broker"),
 		BrokerUsername:   env("BROKER_USERNAME", "broker"),
 		BrokerPassword:   env("BROKER_PASSWORD", "broker-dev-password"),

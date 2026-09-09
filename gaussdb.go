@@ -1,12 +1,8 @@
-// gaussdb.go is the only file that knows SQL.
-//
-// The model: each tenant gets one NOLOGIN group role, one tablespace
-// (MAXSIZE = storage cap), and one logical database (CONNECTION LIMIT).
-// Binding users join the group; the public schema is the shared namespace.
-//
-// Naming: database and user names derive from the platform's instance /
-// binding UUID via a 12-character SHA-256 prefix (short and deterministic).
-// If the user supplies a name parameter, that name is used instead.
+// gaussdb.go prepares the variables for each SQL operation and delegates
+// execution to the templates. All SQL lives in template files under
+// templates/opengauss/ (or a custom TEMPLATE_DIR); the Go code here only
+// derives names, generates passwords, runs existence checks, and wires the
+// template variables.
 
 package main
 
@@ -28,7 +24,7 @@ type DB interface {
 	Ping(ctx context.Context) error
 }
 
-// Names holds every openGauss object that belongs to one service instance.
+// Names holds every database object that belongs to one service instance.
 type Names struct {
 	Database   string
 	GroupRole  string
@@ -39,15 +35,11 @@ const maxIdentifier = 63
 
 var sanitizePattern = regexp.MustCompile(`[^a-z0-9_]`)
 
-// shortHash returns a deterministic 12-character hex prefix of the SHA-256
-// of the input, enough to avoid collisions in any realistic deployment.
 func shortHash(id string) string {
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:6])
 }
 
-// sanitizeName prepares a user-supplied name for use as part of an
-// openGauss identifier: lowercase, only [a-z0-9_], truncated to maxLen.
 func sanitizeName(name string, maxLen int) string {
 	cleaned := sanitizePattern.ReplaceAllString(strings.ToLower(name), "")
 	if len(cleaned) > maxLen {
@@ -56,8 +48,6 @@ func sanitizeName(name string, maxLen int) string {
 	return cleaned
 }
 
-// NamesFor derives the object names from the instance ID, or from a
-// user-supplied name if one was given.
 func NamesFor(instanceID, prefix, customName string) Names {
 	var base string
 	if name := sanitizeName(customName, maxIdentifier-len(prefix)-4); name != "" {
@@ -65,15 +55,9 @@ func NamesFor(instanceID, prefix, customName string) Names {
 	} else {
 		base = prefix + "_" + shortHash(instanceID)
 	}
-	return Names{
-		Database:   base,
-		GroupRole:  base + "_grp",
-		Tablespace: base + "_ts",
-	}
+	return Names{Database: base, GroupRole: base + "_grp", Tablespace: base + "_ts"}
 }
 
-// UserFor derives the binding user name from the binding ID, or from a
-// user-supplied name if one was given.
 func UserFor(bindingID, prefix, customName string) string {
 	var base string
 	if name := sanitizeName(customName, maxIdentifier-len(prefix)-1); name != "" {
@@ -84,23 +68,50 @@ func UserFor(bindingID, prefix, customName string) string {
 	return base
 }
 
-// Admin executes the object lifecycle on openGauss.
+// Admin executes the object lifecycle via SQL templates.
 type Admin struct {
 	cfg *Config
 	db  DB
 }
 
-// NewAdmin wires the Admin to its configuration and database access.
 func NewAdmin(cfg *Config, db DB) *Admin {
 	return &Admin{cfg: cfg, db: db}
 }
 
-// HealthCheck runs one round trip over the real connection path.
 func (a *Admin) HealthCheck(ctx context.Context) error {
 	return a.db.Ping(ctx)
 }
 
-// Provision creates the tenant: group role, tablespace, database.
+// buildVars constructs the template variables for an instance.
+func (a *Admin) buildVars(names Names, spec InstanceParams) TemplateVars {
+	return TemplateVars{
+		Database:        quoteIdent(names.Database),
+		GroupRole:       quoteIdent(names.GroupRole),
+		TableSpace:      quoteIdent(names.Tablespace),
+		AdminUser:       quoteIdent(a.cfg.DBUser),
+		Encoding:        quoteLiteral(spec.Encoding),
+		Compatibility:   quoteLiteral(spec.Compatibility),
+		StorageQuota:    quoteLiteral(quotaString(spec.StorageGB)),
+		TablePrefix:     quoteLiteral(a.cfg.TablespacePrefix + "/" + names.Tablespace),
+		DatabaseLiteral: quoteLiteral(names.Database),
+		MaxConnections:  spec.MaxConnections,
+	}
+}
+
+// execTemplate loads, renders and executes a template on the given database.
+func (a *Admin) execTemplate(ctx context.Context, relPath, database string, vars TemplateVars) error {
+	tmpl, err := LoadTemplate(relPath)
+	if err != nil {
+		return err
+	}
+	statements, err := RenderTemplate(tmpl, vars)
+	if err != nil {
+		return err
+	}
+	return a.db.Exec(ctx, database, statements...)
+}
+
+// Provision creates the tenant via templates.
 func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams) error {
 	if err := a.ensureAbsent(ctx, "pg_database", "datname", names.Database); err != nil {
 		return err
@@ -112,121 +123,64 @@ func (a *Admin) Provision(ctx context.Context, names Names, spec InstanceParams)
 		return err
 	}
 
-	admin := a.adminDB()
-	grp, ts, db := quoteIdent(names.GroupRole), quoteIdent(names.Tablespace), quoteIdent(names.Database)
+	vars := a.buildVars(names, spec)
+	vars.GroupPassword = quoteLiteral(randomPassword())
 
-	// openGauss requires a password on CREATE ROLE even for NOLOGIN roles.
-	// CREATE DATABASE OWNER and CREATE TABLESPACE OWNER require membership.
-	err := a.db.Exec(ctx, admin,
-		fmt.Sprintf("CREATE ROLE %s NOLOGIN PASSWORD %s", grp, quoteLiteral(randomPassword())),
-		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
-		fmt.Sprintf("CREATE TABLESPACE %s OWNER %s RELATIVE LOCATION %s MAXSIZE %s",
-			ts, grp,
-			quoteLiteral(a.cfg.TablespacePrefix+"/"+names.Tablespace),
-			quoteLiteral(quotaString(spec.StorageGB))),
-	)
-	if err != nil {
+	if err := a.execTemplate(ctx, "opengauss/admin-db/provision.sql", a.cfg.DBAdminName, vars); err != nil {
 		return err
 	}
-
-	if err := a.db.Exec(ctx, admin,
-		fmt.Sprintf("CREATE DATABASE %s OWNER %s TEMPLATE template0 ENCODING %s DBCOMPATIBILITY %s TABLESPACE %s CONNECTION LIMIT %d",
-			db, grp, quoteLiteral(spec.Encoding), quoteLiteral(spec.Compatibility), ts, spec.MaxConnections),
-	); err != nil {
-		return err
-	}
-
-	if err := a.db.Exec(ctx, names.Database,
-		fmt.Sprintf("ALTER DATABASE %s ENABLE PRIVATE OBJECT", db),
-		fmt.Sprintf("GRANT USAGE, CREATE ON SCHEMA public TO %s", grp),
-		fmt.Sprintf("GRANT CREATE ON DATABASE %s TO %s", db, grp),
-	); err != nil {
-		return err
-	}
-
-	return a.db.Exec(ctx, admin,
-		fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", db),
-		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, grp),
-		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", db, quoteIdent(a.cfg.DBUser)),
-		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
-	)
+	return a.execTemplate(ctx, "opengauss/tenant-db/provision.sql", names.Database, vars)
 }
 
-// Bind creates a read-write login user that joins the tenant's group role.
+// Bind creates a login user via templates and returns its password.
 func (a *Admin) Bind(ctx context.Context, names Names, username string) (string, error) {
 	if err := a.ensureAbsent(ctx, "pg_roles", "rolname", username); err != nil {
 		return "", err
 	}
 
 	password := randomPassword()
-	user, grp := quoteIdent(username), quoteIdent(names.GroupRole)
+	vars := a.buildVars(names, InstanceParams{})
+	vars.Username = quoteIdent(username)
+	vars.Password = quoteLiteral(password)
 
-	if err := a.db.Exec(ctx, a.adminDB(),
-		fmt.Sprintf("CREATE USER %s LOGIN PASSWORD %s", user, quoteLiteral(password)),
-		fmt.Sprintf("GRANT %s TO %s", grp, user),
-	); err != nil {
+	if err := a.execTemplate(ctx, "opengauss/admin-db/bind.sql", a.cfg.DBAdminName, vars); err != nil {
 		return "", err
 	}
-
-	if err := a.db.Exec(ctx, names.Database,
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", user, grp),
-		fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s", user, grp),
-	); err != nil {
+	if err := a.execTemplate(ctx, "opengauss/tenant-db/bind.sql", names.Database, vars); err != nil {
 		return "", err
 	}
-
 	return password, nil
 }
 
-// Unbind removes the binding user and everything it owns.
+// Unbind removes the binding user via templates.
 func (a *Admin) Unbind(ctx context.Context, names Names, username string) error {
-	user := quoteIdent(username)
-	if err := a.db.Exec(ctx, names.Database,
-		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s", quoteLiteral(username)),
-		fmt.Sprintf("DROP OWNED BY %s CASCADE", user),
-	); err != nil {
+	vars := a.buildVars(names, InstanceParams{})
+	vars.Username = quoteIdent(username)
+	vars.UsernameLiteral = quoteLiteral(username)
+
+	if err := a.execTemplate(ctx, "opengauss/tenant-db/unbind.sql", names.Database, vars); err != nil {
 		return err
 	}
-	return a.db.Exec(ctx, a.adminDB(),
-		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", user),
-		fmt.Sprintf("DROP USER IF EXISTS %s", user),
-	)
+	return a.execTemplate(ctx, "opengauss/admin-db/unbind.sql", a.cfg.DBAdminName, vars)
 }
 
-// Deprovision removes the whole tenant.
+// Deprovision removes the whole tenant via templates.
 func (a *Admin) Deprovision(ctx context.Context, names Names) error {
-	admin := a.adminDB()
-	grp, ts, db := quoteIdent(names.GroupRole), quoteIdent(names.Tablespace), quoteIdent(names.Database)
-
-	return a.db.Exec(ctx, admin,
-		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
-		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s", quoteLiteral(names.Database)),
-		fmt.Sprintf("DROP DATABASE IF EXISTS %s", db),
-		fmt.Sprintf("DROP TABLESPACE IF EXISTS %s", ts),
-		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
-		fmt.Sprintf("DROP ROLE IF EXISTS %s", grp),
-	)
+	vars := a.buildVars(names, InstanceParams{})
+	return a.execTemplate(ctx, "opengauss/admin-db/deprovision.sql", a.cfg.DBAdminName, vars)
 }
 
-// Update changes the connection limit and the storage cap.
+// Update changes the connection limit and storage cap via templates.
 func (a *Admin) Update(ctx context.Context, names Names, spec InstanceParams) error {
-	grp, db := quoteIdent(names.GroupRole), quoteIdent(names.Database)
-	return a.db.Exec(ctx, a.adminDB(),
-		fmt.Sprintf("GRANT %s TO %s", grp, quoteIdent(a.cfg.DBUser)),
-		fmt.Sprintf("ALTER DATABASE %s CONNECTION LIMIT = %d", db, spec.MaxConnections),
-		fmt.Sprintf("ALTER TABLESPACE %s RESIZE MAXSIZE %s", quoteIdent(names.Tablespace), quoteLiteral(quotaString(spec.StorageGB))),
-		fmt.Sprintf("REVOKE %s FROM %s", grp, quoteIdent(a.cfg.DBUser)),
-	)
+	vars := a.buildVars(names, spec)
+	return a.execTemplate(ctx, "opengauss/admin-db/update.sql", a.cfg.DBAdminName, vars)
 }
 
-// AlreadyExistsError marks object names that are already taken in openGauss.
+// AlreadyExistsError marks object names that are already taken.
 type AlreadyExistsError struct{ Message string }
 
 func (e AlreadyExistsError) Error() string { return e.Message }
 
-func (a *Admin) adminDB() string { return a.cfg.DBAdminName }
-
-// ensureAbsent reports a clean conflict if the named object already exists.
 func (a *Admin) ensureAbsent(ctx context.Context, table, column, name string) error {
 	exists, err := a.db.Exists(ctx, table, column, name)
 	if err != nil {
@@ -250,8 +204,6 @@ func quoteLiteral(value string) string {
 
 const passwordAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#%*+-=?@^_~"
 
-// randomPassword returns a 28-character password meeting the openGauss
-// complexity policy (at least three of four character classes).
 func randomPassword() string {
 	for {
 		password := make([]byte, 28)
