@@ -43,7 +43,7 @@ func TestValidateParametersFieldInError(t *testing.T) {
 }
 
 func TestValidateBindingParameters(t *testing.T) {
-	if err := ValidateParameters(bindingSchema(devPlan), json.RawMessage(`{"name":"reporting"}`)); err != nil {
+	if err := ValidateParameters(bindingSchema(), json.RawMessage(`{"name":"reporting"}`)); err != nil {
 		t.Fatalf("valid binding rejected: %v", err)
 	}
 }

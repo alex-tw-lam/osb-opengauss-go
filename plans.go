@@ -130,7 +130,7 @@ func Catalog(data *CatalogData) []domain.Service {
 					Update: domain.Schema{Parameters: updatableSchema(plan)},
 				},
 				Binding: domain.ServiceBindingSchema{
-					Create: domain.Schema{Parameters: bindingSchema(plan)},
+					Create: domain.Schema{Parameters: bindingSchema()},
 				},
 			},
 		})

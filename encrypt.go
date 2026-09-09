@@ -3,10 +3,8 @@
 // 32 bytes). If no key is set, credentials are stored in plaintext and the
 // broker logs a warning at startup.
 //
-// The approach mirrors the Cloud Foundry cloud-service-broker: stdlib crypto,
-// GCM mode, random nonce prefixed to the ciphertext. Key rotation is handled
-// by STATE_ENCRYPTION_KEY_OLD: during rotation the broker decrypts with the
-// old key and re-encrypts with the new one on the next write.
+// Same approach as the Cloud Foundry cloud-service-broker: stdlib crypto,
+// GCM mode, random nonce prefixed to the ciphertext.
 
 package main
 

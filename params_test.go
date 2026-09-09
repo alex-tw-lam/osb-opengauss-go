@@ -44,11 +44,11 @@ func TestResolveInstanceParamsRejectsBadValues(t *testing.T) {
 }
 
 func TestResolveBindingParams(t *testing.T) {
-	spec, err := ResolveBindingParams(devPlan, map[string]any{})
+	spec, err := ResolveBindingParams(map[string]any{})
 	if err != nil || spec.Name != "" {
 		t.Fatalf("defaults wrong: %v %+v", err, spec)
 	}
-	spec, err = ResolveBindingParams(devPlan, map[string]any{"name": "reporting"})
+	spec, err = ResolveBindingParams(map[string]any{"name": "reporting"})
 	if err != nil || spec.Name != "reporting" {
 		t.Fatalf("override wrong: %v %+v", err, spec)
 	}

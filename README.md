@@ -112,6 +112,7 @@ Configuration comes exclusively from environment variables.
 | `BROKER_USERNAME` / `BROKER_PASSWORD` | `broker` / dev default | OSB basic auth |
 | `STATE_DB_PATH` | `./osb-opengauss-state.db` | SQLite state file (default backend) |
 | `STATE_DSN` | *(empty)* | move the state to a PostgreSQL-compatible server: a `postgres://` URL, or `gaussdb://` for openGauss with native sha256 |
+| `STATE_ENCRYPTION_KEY` | *(empty)* | base64 32-byte key; encrypts binding credentials at rest (AES-256-GCM) |
 | `GAUSSDB_NAME_PREFIX` | `gdb` | prefix for created databases/roles/users |
 | `GAUSSDB_STORAGE_MODE` | `role_quota` | `role_quota` or `tablespace` |
 | `GAUSSDB_PLANS_FILE` | `plans.toml` | plan catalog data file |

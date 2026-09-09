@@ -163,15 +163,11 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 	if instance == nil {
 		return domain.Binding{}, apiresponses.ErrInstanceNotFound
 	}
-	plan, err := b.plan(instance.PlanID)
-	if err != nil {
-		return domain.Binding{}, err
-	}
-	params, err := parseParams(bindingSchema(plan), details.RawParameters)
+	params, err := parseParams(bindingSchema(), details.RawParameters)
 	if err != nil {
 		return domain.Binding{}, invalidInput(err.Error())
 	}
-	spec, err := ResolveBindingParams(plan, params)
+	spec, err := ResolveBindingParams(params)
 	if err != nil {
 		return domain.Binding{}, invalidInput(err.Error())
 	}

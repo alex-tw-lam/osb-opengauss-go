@@ -78,7 +78,7 @@ func ResolveInstanceParams(plan Plan, params map[string]any) (InstanceParams, er
 }
 
 // ResolveBindingParams merges user parameters over the plan defaults.
-func ResolveBindingParams(plan Plan, params map[string]any) (BindingParams, error) {
+func ResolveBindingParams(params map[string]any) (BindingParams, error) {
 	resolved := BindingParams{}
 	if v, ok := params["name"]; ok {
 		resolved.Name = fmt.Sprint(v)
@@ -155,7 +155,7 @@ func updatableSchema(plan Plan) map[string]any {
 }
 
 // bindingSchema is the JSON schema for binding create parameters.
-func bindingSchema(plan Plan) map[string]any {
+func bindingSchema() map[string]any {
 	return map[string]any{
 		"$schema": "http://json-schema.org/draft-04/schema#",
 		"type":    "object",

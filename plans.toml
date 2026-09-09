@@ -8,7 +8,7 @@
 # The service_id and plan ids are UUIDs and are referenced by platforms
 # once instances exist - never change them after the first provision.
 
-# ── Service-level configuration ─────────────────────────────────────────
+# - Service-level configuration -
 service_id   = "4c6f6a1e-0f5a-4a5b-9d7e-2f8b3a1c5e01"  # UUID, unique per deployment
 name         = "gaussdb-team-a"
 display_name = "GaussDB (Team A)"
@@ -18,7 +18,7 @@ docs_url     = "https://docs.opengauss.org/"
 support_url  = "https://opengauss.org/"
 tags         = ["gaussdb", "opengauss", "postgresql", "database", "sql"]
 
-# ── Plans ────────────────────────────────────────────────────────────────
+# - Plans -
 # Each plan id is a UUID, unique across all deployments.
 
 [[plan]]

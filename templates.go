@@ -81,16 +81,24 @@ func RenderTemplate(tmpl *template.Template, vars TemplateVars) ([]string, error
 var sqlComment = regexp.MustCompile(`^\s*--`)
 
 // splitSQL breaks a rendered template into individual statements.
+// Multi-line statements (e.g. CREATE DATABASE spanning 7 lines) are joined
+// into a single line; comments and empty lines are removed.
 func splitSQL(sql string) []string {
-	var statements []string
+	var clean []string
 	for _, line := range strings.Split(sql, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || sqlComment.MatchString(line) {
 			continue
 		}
-		line = strings.TrimSuffix(line, ";")
-		if line != "" {
-			statements = append(statements, line)
+		clean = append(clean, line)
+	}
+	joined := strings.Join(clean, "\n")
+
+	var statements []string
+	for _, stmt := range strings.Split(joined, ";") {
+		stmt = strings.Join(strings.Fields(stmt), " ")
+		if stmt != "" {
+			statements = append(statements, stmt)
 		}
 	}
 	return statements
