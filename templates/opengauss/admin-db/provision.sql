@@ -7,14 +7,14 @@ CREATE ROLE {{.GroupRole}} NOLOGIN PASSWORD {{.GroupPassword}};
 -- require the executing user to be a member of the owner role.
 GRANT {{.GroupRole}} TO {{.AdminUser}};
 
-CREATE TABLESPACE {{.TableSpace}} OWNER {{.GroupRole}}
+CREATE TABLESPACE {{.Tablespace}} OWNER {{.GroupRole}}
   RELATIVE LOCATION {{.TablePrefix}} MAXSIZE {{.StorageQuota}};
 
 CREATE DATABASE {{.Database}} OWNER {{.GroupRole}}
   TEMPLATE template0
   ENCODING {{.Encoding}}
   DBCOMPATIBILITY {{.Compatibility}}
-  TABLESPACE {{.TableSpace}}
+  TABLESPACE {{.Tablespace}}
   CONNECTION LIMIT {{.MaxConnections}};
 
 -- Lock connection isolation: only the group role and the broker admin

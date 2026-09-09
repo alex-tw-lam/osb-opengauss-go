@@ -28,14 +28,13 @@ func main() {
 	must(logger, err, "invalid configuration")
 	data, err := LoadCatalog(cfg.PlansFile)
 	must(logger, err, "invalid catalog file")
-	templateDir = cfg.TemplateDir
 	if cfg.DBSSLMode == "disable" {
 		logger.Warn("GAUSSDB_SSLMODE is disable; the admin password and binding credentials cross the network unencrypted")
 	}
 
-	encryptor, err := NewEncryptorFromEnv()
+	encryptor, err := NewEncryptor(cfg.EncryptionKey)
 	must(logger, err, "invalid encryption key")
-	if _, ok := encryptor.(NoopEncryptor); ok {
+	if cfg.EncryptionKey == "" {
 		logger.Warn("STATE_ENCRYPTION_KEY is not set; binding credentials are stored in plaintext")
 	}
 	store, err := OpenStore(cfg, encryptor)

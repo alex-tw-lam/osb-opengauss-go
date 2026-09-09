@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 var (
@@ -54,13 +55,13 @@ func ResolveInstanceParams(plan Plan, params map[string]any) (InstanceParams, er
 	}
 	if v, ok := params["compatibility"]; ok {
 		resolved.Compatibility = fmt.Sprint(v)
-		if !contains(compatibilities, resolved.Compatibility) {
+		if !slices.Contains(compatibilities, resolved.Compatibility) {
 			return resolved, fmt.Errorf("'compatibility' must be one of %v", compatibilities)
 		}
 	}
 	if v, ok := params["encoding"]; ok {
 		resolved.Encoding = fmt.Sprint(v)
-		if !contains(encodings, resolved.Encoding) {
+		if !slices.Contains(encodings, resolved.Encoding) {
 			return resolved, fmt.Errorf("'encoding' must be one of %v", encodings)
 		}
 	}
@@ -98,15 +99,6 @@ func boundedInt(params map[string]any, key string, fallback, maximum int) (int, 
 		return int(v), nil
 	}
 	return 0, fmt.Errorf("'%s' must be a whole number between 1 and %d", key, maximum)
-}
-
-func contains(list []string, value string) bool {
-	for _, item := range list {
-		if item == value {
-			return true
-		}
-	}
-	return false
 }
 
 // instanceSchema is the JSON schema for instance create parameters.

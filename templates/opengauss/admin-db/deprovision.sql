@@ -8,7 +8,7 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = {{.Databa
 
 DROP DATABASE IF EXISTS {{.Database}};
 
-DROP TABLESPACE IF EXISTS {{.TableSpace}};
+DROP TABLESPACE IF EXISTS {{.Tablespace}};
 
 REVOKE {{.GroupRole}} FROM {{.AdminUser}};
 

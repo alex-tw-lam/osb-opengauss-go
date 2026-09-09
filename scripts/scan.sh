@@ -49,27 +49,33 @@ sources() {
         -not -path './.git/*' -not -path './scripts/scan.sh'
 }
 
+# Each text scan is one named function that prints its findings.
+ascii_only()        { sources | xargs grep -nP '[^\x00-\x7F]'; }
+contextual_traces() { sources | xargs grep -niE '\b(operation team|ops team|cloud team|system administrat|sop\b|tpm\b|trusted platform|auditab)'; }
+ai_traces()         { sources | xargs grep -niE '\b(delve|leverage|robust|seamless|comprehensive|furthermore|moreover|additionally|in summary|it.s worth noting)\b'; }
+todo_markers()      { sources | xargs grep -nE '\b(TODO|FIXME|XXX|HACK)\b'; }
+
 # 1. Compilation and tests.
-check      "go build"         go build ./...
-check      "go vet"           go vet ./...
-check      "go test"          go test ./...
-check_silent "gofmt"          gofmt -l .
+check        "go build"    go build ./...
+check        "go vet"      go vet ./...
+check        "go test"     go test ./...
+check_silent "gofmt"       gofmt -l .
 
 # 2. ASCII only: no non-ASCII byte may appear in any source file.
-check_silent "ascii-only"     bash -c "$(declare -f sources); sources | xargs grep -nP '[^\x00-\x7F]'"
+check_silent "ascii-only"  ascii_only
 
 # 3. Contextual traces: wording tied to one team or workflow must not leak
 #    into the repository.
-check_silent "contextual-traces" bash -c "$(declare -f sources); sources | xargs grep -niE '\b(operation team|ops team|cloud team|system administrat|sop\b|tpm\b|trusted platform|auditab)'"
+check_silent "contextual-traces" contextual_traces
 
-# 4. AI traces: boilerplate phrasing and telltale punctuation.
-check_silent "ai-traces"      bash -c "$(declare -f sources); sources | xargs grep -niE '\b(delve|leverage|robust|seamless|comprehensive|furthermore|moreover|additionally|in summary|it.s worth noting)\b'"
+# 4. AI traces: boilerplate phrasing.
+check_silent "ai-traces"   ai_traces
 
 # 5. Leftover work markers.
-check_silent "todo-markers"   bash -c "$(declare -f sources); sources | xargs grep -nE '\b(TODO|FIXME|XXX|HACK)\b'"
+check_silent "todo-markers" todo_markers
 
 # 6. Optional external scanners, used when installed.
-for tool in staticcheck govulncheck gitleaks; do
+for tool in staticcheck govulncheck gitleaks gosec; do
     if command -v "$tool" >/dev/null 2>&1; then
         case "$tool" in
             gitleaks) check "$tool" "$tool" detect --source . --no-git ;;

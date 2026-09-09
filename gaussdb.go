@@ -89,7 +89,7 @@ func (a *Admin) buildVars(names Names, spec InstanceParams) TemplateVars {
 	return TemplateVars{
 		Database:        quoteIdent(names.Database),
 		GroupRole:       quoteIdent(names.GroupRole),
-		TableSpace:      quoteIdent(names.Tablespace),
+		Tablespace:      quoteIdent(names.Tablespace),
 		AdminUser:       quoteIdent(a.cfg.DBUser),
 		Encoding:        quoteLiteral(spec.Encoding),
 		Compatibility:   quoteLiteral(spec.Compatibility),
@@ -102,7 +102,7 @@ func (a *Admin) buildVars(names Names, spec InstanceParams) TemplateVars {
 
 // execTemplate loads, renders and executes a template on the given database.
 func (a *Admin) execTemplate(ctx context.Context, relPath, database string, vars TemplateVars) error {
-	tmpl, err := LoadTemplate(relPath)
+	tmpl, err := LoadTemplate(a.cfg.TemplateDir, relPath)
 	if err != nil {
 		return err
 	}

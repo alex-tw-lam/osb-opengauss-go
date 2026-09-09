@@ -18,10 +18,6 @@ import (
 //go:embed templates/opengauss
 var embeddedTemplates embed.FS
 
-// TemplateDir is loaded from TEMPLATE_DIR at startup; empty means use the
-// embedded openGauss defaults.
-var templateDir string
-
 // TemplateVars holds every value that can appear in a SQL template.
 // Identifiers are pre-quoted (double quotes), literals are pre-quoted
 // (single quotes) - templates use them as-is.
@@ -29,7 +25,7 @@ type TemplateVars struct {
 	// Quoted identifiers ({{.Database}}, {{.GroupRole}}, etc.)
 	Database   string
 	GroupRole  string
-	TableSpace string
+	Tablespace string
 	AdminUser  string
 	Username   string
 
@@ -49,13 +45,13 @@ type TemplateVars struct {
 	MaxConnections int
 }
 
-// LoadTemplate reads a template file. If templateDir is set, it reads from
-// disk; otherwise it reads from the embedded defaults.
-func LoadTemplate(relPath string) (*template.Template, error) {
+// LoadTemplate reads a template file: from dir when set, otherwise from the
+// embedded defaults; a file missing in dir falls back to the embedded copy.
+func LoadTemplate(dir, relPath string) (*template.Template, error) {
 	var content []byte
 	var err error
-	if templateDir != "" {
-		content, err = os.ReadFile(filepath.Join(templateDir, relPath)) // #nosec G304
+	if dir != "" {
+		content, err = os.ReadFile(filepath.Join(dir, relPath)) // #nosec G304
 		if os.IsNotExist(err) {
 			// Fall back to embedded default if the override doesn't have this file.
 			content, err = embeddedTemplates.ReadFile("templates/" + relPath)

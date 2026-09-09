@@ -36,6 +36,10 @@ type Config struct {
 	StatePath string
 	StateDSN  string
 
+	// base64 32-byte key encrypting binding credentials at rest; empty
+	// means plaintext storage with a startup warning.
+	EncryptionKey string
+
 	// Prefix for every database / role / user the broker creates.
 	NamePrefix string
 
@@ -46,14 +50,26 @@ type Config struct {
 
 // LoadConfig reads the environment and fails loudly on invalid values.
 func LoadConfig() (*Config, error) {
+	dbPort, err := envInt("GAUSSDB_PORT", 5432)
+	if err != nil {
+		return nil, err
+	}
+	connTimeout, err := envInt("GAUSSDB_CONNECT_TIMEOUT", 10)
+	if err != nil {
+		return nil, err
+	}
+	brokerPort, err := envInt("BROKER_PORT", 5000)
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
 		DBHost:           env("GAUSSDB_HOST", "localhost"),
-		DBPort:           envInt("GAUSSDB_PORT", 5432),
+		DBPort:           dbPort,
 		DBUser:           env("GAUSSDB_ADMIN_USER", "gaussdb"),
 		DBPassword:       os.Getenv("GAUSSDB_ADMIN_PASSWORD"),
 		DBAdminName:      env("GAUSSDB_ADMIN_DB", "postgres"),
 		DBSSLMode:        env("GAUSSDB_SSLMODE", "disable"),
-		DBConnTimeout:    envInt("GAUSSDB_CONNECT_TIMEOUT", 10),
+		DBConnTimeout:    connTimeout,
 		PlansFile:        env("GAUSSDB_PLANS_FILE", "plans.toml"),
 		TemplateDir:      os.Getenv("TEMPLATE_DIR"),
 		TablespacePrefix: env("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "broker"),
@@ -61,9 +77,10 @@ func LoadConfig() (*Config, error) {
 		BrokerPassword:   os.Getenv("BROKER_PASSWORD"),
 		StatePath:        env("STATE_DB_PATH", "osb-opengauss-state.db"),
 		StateDSN:         os.Getenv("STATE_DSN"),
+		EncryptionKey:    os.Getenv("STATE_ENCRYPTION_KEY"),
 		NamePrefix:       env("GAUSSDB_NAME_PREFIX", "gdb"),
 		Host:             env("BROKER_HOST", "127.0.0.1"),
-		Port:             envInt("BROKER_PORT", 5000),
+		Port:             brokerPort,
 	}
 	cfg.TablespacePrefix = strings.Trim(cfg.TablespacePrefix, "/")
 	if strings.Contains(cfg.TablespacePrefix, "/") {
@@ -98,14 +115,14 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func envInt(key string, fallback int) int {
+func envInt(key string, fallback int) (int, error) {
 	value := os.Getenv(key)
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s must be a whole number, got %q", key, value)
 	}
-	return n
+	return n, nil
 }

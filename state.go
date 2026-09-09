@@ -1,7 +1,7 @@
 // state.go is the broker's memory: instance and binding records kept in a
 // SQL database through GORM. Binding credentials are encrypted at rest with
-// AES-256-GCM when STATE_ENCRYPTION_KEY is set and stored base64-encoded so
-// the column is valid text in every backend; the SQLite file is 0600.
+// AES-256-GCM when a key is configured, and stored base64-encoded so the
+// column is valid text in every backend; the SQLite file is 0600.
 // Every read returns an error instead of panicking: a state database that
 // cannot be read is a hard failure, never an invisible record.
 

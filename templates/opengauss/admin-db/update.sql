@@ -9,6 +9,6 @@ ALTER DATABASE {{.Database}} CONNECTION LIMIT = {{.MaxConnections}};
 -- Resize the tenant's storage cap. If the new quota is below current
 -- usage the change still succeeds, but writes are blocked until usage
 -- drops under the new limit.
-ALTER TABLESPACE {{.TableSpace}} RESIZE MAXSIZE {{.StorageQuota}};
+ALTER TABLESPACE {{.Tablespace}} RESIZE MAXSIZE {{.StorageQuota}};
 
 REVOKE {{.GroupRole}} FROM {{.AdminUser}};

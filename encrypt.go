@@ -1,7 +1,7 @@
 // encrypt.go encrypts and decrypts binding credentials at rest in the state
-// database, using AES-256-GCM with a key from STATE_ENCRYPTION_KEY (base64
-// 32 bytes). If no key is set, credentials are stored in plaintext and the
-// broker logs a warning at startup.
+// database, using AES-256-GCM with the key supplied by the configuration
+// (base64 32 bytes). Without a key, credentials are stored in plaintext and
+// the broker logs a warning at startup.
 //
 // Same approach as the Cloud Foundry cloud-service-broker: stdlib crypto,
 // GCM mode, random nonce prefixed to the ciphertext.
@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 )
 
 // Encryptor encrypts and decrypts byte slices.
@@ -72,10 +71,9 @@ func (e *GCMEncryptor) Decrypt(ciphertext []byte) ([]byte, error) {
 	return gcm.Open(nil, ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():], nil)
 }
 
-// NewEncryptorFromEnv builds the encryptor from environment variables.
-// Returns a NoopEncryptor if no key is configured.
-func NewEncryptorFromEnv() (Encryptor, error) {
-	keyB64 := os.Getenv("STATE_ENCRYPTION_KEY")
+// NewEncryptor builds the encryptor from a base64 key; an empty key means
+// plaintext storage (a NoopEncryptor).
+func NewEncryptor(keyB64 string) (Encryptor, error) {
 	if keyB64 == "" {
 		return NoopEncryptor{}, nil
 	}

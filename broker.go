@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"reflect"
 	"sync"
 
 	"code.cloudfoundry.org/brokerapi/v13/domain"
@@ -87,7 +86,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 		return domain.ProvisionedServiceSpec{}, err
 	}
 	if existing != nil {
-		if existing.PlanID == spec.PlanID && reflect.DeepEqual(existing.Params, spec) {
+		if existing.Params == spec {
 			return domain.ProvisionedServiceSpec{AlreadyExists: true}, nil
 		}
 		return domain.ProvisionedServiceSpec{}, apiresponses.ErrInstanceAlreadyExists
@@ -121,15 +120,14 @@ func (b *Broker) Update(ctx context.Context, instanceID string, details domain.U
 	if existing == nil {
 		return domain.UpdateServiceSpec{}, apiresponses.ErrInstanceNotFound
 	}
-	// Plan changes are advertised as unsupported in the catalog.
-	previousPlan := existing.PlanID
-	if details.PreviousValues.PlanID != "" {
-		previousPlan = details.PreviousValues.PlanID
-	}
-	if details.PlanID != "" && details.PlanID != previousPlan {
+	// The catalog advertises plan_updatable so platforms forward parameter
+	// updates; moving an instance to a different plan is rejected here.
+	// The stored plan is the broker's own record and wins over the
+	// request's claim about the previous plan.
+	if details.PlanID != "" && details.PlanID != existing.PlanID {
 		return domain.UpdateServiceSpec{}, apiresponses.ErrPlanChangeNotSupported
 	}
-	plan, err := b.plan(previousPlan)
+	plan, err := b.plan(existing.PlanID)
 	if err != nil {
 		return domain.UpdateServiceSpec{}, err
 	}
@@ -219,7 +217,7 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 		return domain.Binding{}, err
 	}
 	if existing != nil {
-		if existing.InstanceID == instanceID && reflect.DeepEqual(existing.Params, spec) {
+		if existing.InstanceID == instanceID && existing.Params == spec {
 			return domain.Binding{AlreadyExists: true, Credentials: existing.Credentials}, nil
 		}
 		return domain.Binding{}, apiresponses.ErrBindingAlreadyExists
