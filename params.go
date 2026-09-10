@@ -17,7 +17,6 @@ var (
 
 // InstanceParams is the fully resolved parameter set of one logical database.
 type InstanceParams struct {
-	PlanID         string `json:"plan_id"`
 	Name           string `json:"name"`
 	Compatibility  string `json:"compatibility"`
 	Encoding       string `json:"encoding"`
@@ -47,7 +46,6 @@ func rawParameters(raw json.RawMessage) (map[string]any, error) {
 // Parameters may tighten a plan but never exceed it.
 func ResolveInstanceParams(plan Plan, params map[string]any) (InstanceParams, error) {
 	resolved := InstanceParams{
-		PlanID:         plan.ID,
 		Compatibility:  "PG",
 		Encoding:       "UTF8",
 		MaxConnections: plan.MaxConnections,
@@ -74,15 +72,6 @@ func ResolveInstanceParams(plan Plan, params map[string]any) (InstanceParams, er
 	}
 	if resolved.StorageGB, err = boundedInt(params, "storage_gb", plan.StorageGB, plan.StorageGB); err != nil {
 		return resolved, err
-	}
-	return resolved, nil
-}
-
-// ResolveBindingParams merges user parameters over the plan defaults.
-func ResolveBindingParams(params map[string]any) (BindingParams, error) {
-	resolved := BindingParams{}
-	if v, ok := params["name"]; ok {
-		resolved.Name = fmt.Sprint(v)
 	}
 	return resolved, nil
 }

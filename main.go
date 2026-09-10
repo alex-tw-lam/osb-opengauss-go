@@ -41,10 +41,11 @@ func main() {
 	must(logger, err, "cannot open state file")
 	defer store.Close()
 
+	db := NewDB(cfg)
 	server := &http.Server{
 		Addr:              cfg.Host + ":" + strconv.Itoa(cfg.Port),
 		ReadHeaderTimeout: 10 * time.Second,
-		Handler:           newHandler(cfg, NewBroker(cfg, data, NewAdmin(cfg, NewDB(cfg)), store, logger), logger),
+		Handler:           newHandler(cfg, NewBroker(cfg, data, NewAdmin(cfg, db), store, logger), db, logger),
 	}
 	go func() {
 		logger.Info("broker listening", "address", server.Addr)
@@ -70,7 +71,7 @@ func must(logger *slog.Logger, err error, msg string) {
 }
 
 // newHandler wires the brokerapi endpoints under / and the health probe.
-func newHandler(cfg *Config, broker *Broker, logger *slog.Logger) http.Handler {
+func newHandler(cfg *Config, broker *Broker, db DB, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", brokerapi.New(broker, logger, brokerapi.BrokerCredentials{
 		Username: cfg.BrokerUsername,
@@ -80,7 +81,7 @@ func newHandler(cfg *Config, broker *Broker, logger *slog.Logger) http.Handler {
 		// Unauthenticated on purpose: for load balancers and probes.
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := broker.HealthCheck(ctx); err != nil {
+		if err := db.Ping(ctx); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "unreachable", "error": err.Error()})
 			return

@@ -35,11 +35,6 @@ type GCMEncryptor struct {
 	key [32]byte
 }
 
-// NewGCMEncryptor creates an encryptor from a 32-byte key.
-func NewGCMEncryptor(key [32]byte) *GCMEncryptor {
-	return &GCMEncryptor{key: key}
-}
-
 func (e *GCMEncryptor) gcm() (cipher.AEAD, error) {
 	block, err := aes.NewCipher(e.key[:])
 	if err != nil {
@@ -86,5 +81,5 @@ func NewEncryptor(keyB64 string) (Encryptor, error) {
 	}
 	var keyArray [32]byte
 	copy(keyArray[:], key)
-	return NewGCMEncryptor(keyArray), nil
+	return &GCMEncryptor{key: keyArray}, nil
 }

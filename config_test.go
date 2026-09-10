@@ -16,15 +16,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsMultiSegmentPrefix(t *testing.T) {
-	t.Setenv("BROKER_PASSWORD", "x")
-	t.Setenv("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "a/b")
-	_, err := LoadConfig()
-	if err == nil || !strings.Contains(err.Error(), "single path segment") {
-		t.Fatalf("expected prefix error, got %v", err)
-	}
-}
-
 func TestLoadConfigRequiresBrokerPassword(t *testing.T) {
 	t.Setenv("BROKER_PASSWORD", "")
 	_, err := LoadConfig()
@@ -45,7 +36,7 @@ func TestLoadConfigRejectsBadNamePrefix(t *testing.T) {
 
 func TestLoadConfigRejectsBadLocationPrefix(t *testing.T) {
 	t.Setenv("BROKER_PASSWORD", "x")
-	for _, prefix := range []string{"a'b", "a;b", "a b"} {
+	for _, prefix := range []string{"a/b", "a'b", "a;b", "a b"} {
 		t.Setenv("GAUSSDB_TABLESPACE_LOCATION_PREFIX", prefix)
 		if _, err := LoadConfig(); err == nil {
 			t.Errorf("prefix %q must be rejected", prefix)

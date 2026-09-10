@@ -34,7 +34,6 @@ type Plan struct {
 	Description    string `toml:"description"`
 	StorageGB      int    `toml:"storage_gb"`
 	MaxConnections int    `toml:"max_connections"`
-	Free           *bool  `toml:"free"`
 }
 
 // CatalogData is the parsed contents of plans.toml.
@@ -107,7 +106,6 @@ func validatePlans(plans []Plan, path string) error {
 func Catalog(data *CatalogData) []domain.Service {
 	plans := make([]domain.ServicePlan, 0, len(data.Plans))
 	for _, plan := range data.Plans {
-		free := plan.Free == nil || *plan.Free
 		displayName := plan.DisplayName
 		if displayName == "" {
 			displayName = plan.Name
@@ -116,7 +114,6 @@ func Catalog(data *CatalogData) []domain.Service {
 			ID:          plan.ID,
 			Name:        plan.Name,
 			Description: plan.Description,
-			Free:        &free,
 			Metadata: &domain.ServicePlanMetadata{
 				DisplayName: displayName,
 				Bullets: []string{

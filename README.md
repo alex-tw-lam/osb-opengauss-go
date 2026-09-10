@@ -43,8 +43,8 @@ Plans live in [`plans.toml`](plans.toml) - deployment **data**, not code.
 Each environment carries its own copy; the broker validates it at startup
 and refuses to start on a missing, malformed or duplicate-id file. Fields:
 `id`/`name`/`description` (never rename an id once instances exist on it),
-`storage_gb` (tablespace MAXSIZE), `max_connections` (database CONNECTION
-LIMIT) and the optional `free` (defaults true).
+`storage_gb` (tablespace MAXSIZE) and `max_connections` (database
+CONNECTION LIMIT).
 
 Optional provision parameters (validated against the plan): `name`
 (human-readable database name), `compatibility` (`PG`/`A`/`B`/`C`),
@@ -64,8 +64,7 @@ itself - including the instance the broker manages, using the same
 sha256-capable driver (the tables then live in the admin user's schema).
 Written portably: no upserts (`INSERT ... ON CONFLICT` is PostgreSQL 9.5+
 and openGauss is 9.2 based), so record writes are explicit read-then-write.
-Credentials are stored base64-encoded; records written by versions before
-that encoding must be re-bound after upgrading.
+Credentials are stored base64-encoded.
 
 
 ## Quick start
@@ -100,7 +99,7 @@ curl $AUTH -H "$H" -X PUT "localhost:5000/v2/service_instances/<uuid>?accepts_in
 curl $AUTH -H "$H" -X PUT "localhost:5000/v2/service_instances/<uuid>/service_bindings/<uuid2>" \
   -H 'Content-Type: application/json' \
   -d "{\"service_id\":\"$SID\",\"plan_id\":\"$PLAN\",\"parameters\":{\"name\":\"reporting\"}}"
-# -> credentials: uri / hostname / port / database / username / password / jdbcUrl
+# -> credentials: uri / hostname / port / database / username / password / sslmode
 ```
 
 ## Configuration
@@ -134,6 +133,7 @@ Configuration comes exclusively from environment variables.
 | `params.go` | Request rules: parameter validation and the matching JSON schemas |
 | `validate.go` | JSON Schema validation of request parameters |
 | `gaussdb.go` | All openGauss DDL; knows SQL, not the OSB API |
+| `names.go` | Derives every object name and generated secret (hashes, sanitizing, quoting, passwords) |
 | `templates.go` | Loads and renders the SQL templates (embedded or TEMPLATE_DIR) |
 | `driver.go` | The database driver: gaussdb-go connections behind the DB interface |
 | `state.go` | Memory: GORM records of what the broker created (SQLite or PostgreSQL-compatible) |

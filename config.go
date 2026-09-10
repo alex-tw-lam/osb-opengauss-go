@@ -83,11 +83,8 @@ func LoadConfig() (*Config, error) {
 		Port:             brokerPort,
 	}
 	cfg.TablespacePrefix = strings.Trim(cfg.TablespacePrefix, "/")
-	if strings.Contains(cfg.TablespacePrefix, "/") {
-		return nil, fmt.Errorf("GAUSSDB_TABLESPACE_LOCATION_PREFIX must be a single path segment")
-	}
 	if !locationPrefixPattern.MatchString(cfg.TablespacePrefix) {
-		return nil, fmt.Errorf("GAUSSDB_TABLESPACE_LOCATION_PREFIX must be 1-32 letters, digits, hyphens or underscores")
+		return nil, fmt.Errorf("GAUSSDB_TABLESPACE_LOCATION_PREFIX must be a single path segment of 1-32 letters, digits, hyphens or underscores")
 	}
 	if !namePrefixPattern.MatchString(cfg.NamePrefix) {
 		return nil, fmt.Errorf("GAUSSDB_NAME_PREFIX must be 1-30 characters: a lowercase letter, then lowercase letters, digits or underscores")

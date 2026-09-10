@@ -37,11 +37,6 @@ func NewBroker(cfg *Config, data *CatalogData, admin *Admin, store *Store, log *
 	return &Broker{cfg: cfg, catalog: data, admin: admin, store: store, log: log}
 }
 
-// HealthCheck reports whether the database can be reached.
-func (b *Broker) HealthCheck(ctx context.Context) error {
-	return b.admin.HealthCheck(ctx)
-}
-
 func (b *Broker) plan(planID string) (Plan, error) {
 	for _, plan := range b.catalog.Plans {
 		if plan.ID == planID {
@@ -86,7 +81,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 		return domain.ProvisionedServiceSpec{}, err
 	}
 	if existing != nil {
-		if existing.Params == spec {
+		if existing.PlanID == plan.ID && existing.Params == spec {
 			return domain.ProvisionedServiceSpec{AlreadyExists: true}, nil
 		}
 		return domain.ProvisionedServiceSpec{}, apiresponses.ErrInstanceAlreadyExists
@@ -98,7 +93,7 @@ func (b *Broker) Provision(ctx context.Context, instanceID string, details domai
 		return domain.ProvisionedServiceSpec{}, mapAdminError(err, apiresponses.ErrInstanceAlreadyExists)
 	}
 	if err := b.store.PutInstance(instanceID, InstanceRecord{
-		ServiceID: b.catalog.ServiceID, PlanID: spec.PlanID, Database: names.Database, Params: spec,
+		ServiceID: b.catalog.ServiceID, PlanID: plan.ID, Database: names.Database, Params: spec,
 	}); err != nil {
 		return domain.ProvisionedServiceSpec{}, err
 	}
@@ -207,9 +202,9 @@ func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details
 	if err != nil {
 		return domain.Binding{}, invalidInput(err.Error())
 	}
-	spec, err := ResolveBindingParams(params)
-	if err != nil {
-		return domain.Binding{}, invalidInput(err.Error())
+	spec := BindingParams{}
+	if v, ok := params["name"]; ok {
+		spec.Name = fmt.Sprint(v)
 	}
 
 	existing, err := b.store.GetBinding(bindingID)
@@ -335,7 +330,6 @@ func (b *Broker) credentials(database, username, password string) map[string]str
 		"username": username,
 		"password": password,
 		"sslmode":  c.DBSSLMode,
-		"jdbcUrl":  fmt.Sprintf("jdbc:postgresql://%s:%d/%s", c.DBHost, c.DBPort, database),
 	}
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,11 +10,6 @@ import (
 	"strings"
 	"testing"
 )
-
-var errPingFailed = errors.New("connection refused")
-
-// jsonReader turns a JSON string into a request body.
-func jsonReader(body string) io.Reader { return strings.NewReader(body) }
 
 // withAuth adds the broker basic auth and API version headers.
 func withAuth(request *http.Request) *http.Request {
@@ -35,7 +29,7 @@ func newTestServer(t *testing.T, db *fakeDB) http.Handler {
 	}
 	t.Cleanup(func() { store.Close() })
 	broker := NewBroker(cfg, &CatalogData{ServiceConfig: ServiceConfig{ServiceID: "aaaa1111-2222-3333-4444-555555555555", Name: "gaussdb", Description: "test"}, Plans: []Plan{devPlan}}, NewAdmin(cfg, db), store, slog.Default())
-	return newHandler(cfg, broker, slog.Default())
+	return newHandler(cfg, broker, db, slog.Default())
 }
 
 func TestCatalogOverHTTP(t *testing.T) {
@@ -48,9 +42,7 @@ func TestCatalogOverHTTP(t *testing.T) {
 		t.Fatalf("without auth = %d, want 401", recorder.Code)
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/v2/catalog", nil)
-	request.SetBasicAuth("broker", "x")
-	request.Header.Set("X-Broker-API-Version", "2.16")
+	request := withAuth(httptest.NewRequest(http.MethodGet, "/v2/catalog", nil))
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -76,7 +68,7 @@ func TestCatalogOverHTTP(t *testing.T) {
 func TestProvisionOverHTTP(t *testing.T) {
 	server := newTestServer(t, newFakeDB())
 	body := `{"service_id":"` + "aaaa1111-2222-3333-4444-555555555555" + `","plan_id":"bbbb1111-2222-3333-4444-555555555555"}`
-	request := httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", jsonReader(body))
+	request := httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", strings.NewReader(body))
 	request.SetBasicAuth("broker", "x")
 	request.Header.Set("X-Broker-API-Version", "2.16")
 	recorder := httptest.NewRecorder()
@@ -87,13 +79,13 @@ func TestProvisionOverHTTP(t *testing.T) {
 
 	// Identical repeat is 200, conflict is 409.
 	recorder = httptest.NewRecorder()
-	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", jsonReader(body))))
+	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", strings.NewReader(body))))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("identical re-provision = %d, want 200", recorder.Code)
 	}
 	conflict := `{"service_id":"` + "aaaa1111-2222-3333-4444-555555555555" + `","plan_id":"bbbb1111-2222-3333-4444-555555555555","parameters":{"max_connections":5}}`
 	recorder = httptest.NewRecorder()
-	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", jsonReader(conflict))))
+	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/"+iid+"?accepts_incomplete=false", strings.NewReader(conflict))))
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("conflicting re-provision = %d, want 409", recorder.Code)
 	}
@@ -101,7 +93,7 @@ func TestProvisionOverHTTP(t *testing.T) {
 	// Unknown plan is 400.
 	bad := `{"service_id":"` + "aaaa1111-2222-3333-4444-555555555555" + `","plan_id":"nope"}`
 	recorder = httptest.NewRecorder()
-	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/99999999-9999-9999-9999-999999999999?accepts_incomplete=false", jsonReader(bad))))
+	server.ServeHTTP(recorder, withAuth(httptest.NewRequest(http.MethodPut, "/v2/service_instances/99999999-9999-9999-9999-999999999999?accepts_incomplete=false", strings.NewReader(bad))))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("unknown plan = %d, want 400", recorder.Code)
 	}
@@ -116,7 +108,7 @@ func TestHealthzOverHTTP(t *testing.T) {
 	}
 
 	broken := newFakeDB()
-	broken.pingErr = errPingFailed
+	broken.pingErr = errors.New("connection refused")
 	recorder = httptest.NewRecorder()
 	newTestServer(t, broken).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if recorder.Code != http.StatusServiceUnavailable {

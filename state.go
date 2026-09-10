@@ -184,7 +184,6 @@ func (s *Store) PutBinding(bindingID string, username, instanceID string, params
 
 // BindingInfo is the decrypted view of a stored binding.
 type BindingInfo struct {
-	BindingID   string
 	InstanceID  string
 	Username    string
 	Params      BindingParams
@@ -206,7 +205,6 @@ func (s *Store) GetBinding(bindingID string) (*BindingInfo, error) {
 		return nil, err
 	}
 	return &BindingInfo{
-		BindingID:   record.BindingID,
 		InstanceID:  record.InstanceID,
 		Username:    record.Username,
 		Params:      record.Params,
@@ -234,7 +232,6 @@ func (s *Store) BindingsForInstance(instanceID string) ([]BindingInfo, error) {
 			return nil, err
 		}
 		result = append(result, BindingInfo{
-			BindingID:   record.BindingID,
 			InstanceID:  record.InstanceID,
 			Username:    record.Username,
 			Params:      record.Params,

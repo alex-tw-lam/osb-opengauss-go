@@ -3,7 +3,6 @@
 // same Huawei org as the Python repository's driver. It speaks openGauss's
 // native sha256 authentication (password_encryption_type = 2) as well as
 // md5 (type 0/1), so it is the single driver for every server configuration.
-// Tests never touch this file: they inject a fake DB.
 
 package main
 

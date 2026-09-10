@@ -22,7 +22,7 @@ func TestInstanceStateRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 	record := InstanceRecord{
 		ServiceID: "svc-1", PlanID: "plan-1", Database: "gdb_x",
-		Params: InstanceParams{PlanID: "plan-1", Compatibility: "A", MaxConnections: 10},
+		Params: InstanceParams{Compatibility: "A", MaxConnections: 10},
 	}
 	if err := store.PutInstance("i1", record); err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestBindingCredentialsEncrypted(t *testing.T) {
 	cfg.StatePath = filepath.Join(t.TempDir(), "enc.db")
 	key := [32]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
-	store, err := OpenStore(cfg, NewGCMEncryptor(key))
+	store, err := OpenStore(cfg, &GCMEncryptor{key: key})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestUndecryptableBindingFailsClosed(t *testing.T) {
 	cfg.StatePath = filepath.Join(t.TempDir(), "rotated.db")
 	first := [32]byte{1}
 	second := [32]byte{2}
-	store, err := OpenStore(cfg, NewGCMEncryptor(first))
+	store, err := OpenStore(cfg, &GCMEncryptor{key: first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestUndecryptableBindingFailsClosed(t *testing.T) {
 	}
 	store.Close()
 
-	store, err = OpenStore(cfg, NewGCMEncryptor(second))
+	store, err = OpenStore(cfg, &GCMEncryptor{key: second})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,6 @@ name = "two"
 description = "second"
 storage_gb = 50
 max_connections = 100
-free = false
 `
 
 func TestLoadPlansValid(t *testing.T) {
@@ -44,9 +43,6 @@ func TestLoadPlansValid(t *testing.T) {
 	}
 	if len(data.Plans) != 2 || data.Plans[0].ID != "bbbb1111-2222-3333-4444-555555555555" || data.Plans[0].StorageGB != 5 {
 		t.Fatalf("unexpected data.Plans: %+v", data.Plans)
-	}
-	if data.Plans[0].Free != nil || data.Plans[1].Free == nil || *data.Plans[1].Free {
-		t.Errorf("free default/override wrong: %+v %+v", data.Plans[0].Free, data.Plans[1].Free)
 	}
 }
 
