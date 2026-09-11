@@ -139,6 +139,62 @@ func TestUndecryptableBindingFailsClosed(t *testing.T) {
 	}
 }
 
+// Rotating to a new key with the old key as previous re-encrypts old records,
+// leaves new-key records alone, and fails closed on records neither key reads.
+func TestRotateBindings(t *testing.T) {
+	cfg := testConfig()
+	cfg.StatePath = filepath.Join(t.TempDir(), "rotate.db")
+	first := [32]byte{1}
+	second := [32]byte{2}
+	store, err := OpenStore(cfg, &GCMEncryptor{key: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBinding("old", "u1", "i1", BindingParams{}, map[string]string{"password": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	store, err = OpenStore(cfg, &GCMEncryptor{key: second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.PutBinding("new", "u2", "i1", BindingParams{}, map[string]string{"password": "p2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rotated, err := store.RotateBindings(&GCMEncryptor{key: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated != 1 {
+		t.Fatalf("expected 1 rotated record, got %d", rotated)
+	}
+	for id, want := range map[string]string{"old": "p1", "new": "p2"} {
+		got, err := store.GetBinding(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.Credentials["password"] != want {
+			t.Fatalf("binding %s unreadable after rotation: %+v", id, got)
+		}
+	}
+
+	// Rotating again must be a no-op now that every record is on the new key.
+	if rotated, err := store.RotateBindings(&GCMEncryptor{key: first}); err != nil || rotated != 0 {
+		t.Fatalf("second rotation expected 0 records, no error; got %d, %v", rotated, err)
+	}
+
+	// A record encrypted with an unknown key must stop the rotation.
+	if err := store.db.Exec("INSERT INTO binding_records (binding_id, instance_id, username, params, credentials) VALUES ('alien', 'i1', 'u3', '{}', 'bm9wZQ==')").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RotateBindings(&GCMEncryptor{key: first}); err == nil {
+		t.Fatal("rotation must fail on a record neither key can read")
+	}
+}
+
 func TestStateDSNValidation(t *testing.T) {
 	cfg := testConfig()
 	cfg.StateDSN = "mysql://nope"

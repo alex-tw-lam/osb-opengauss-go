@@ -40,6 +40,13 @@ func main() {
 	store, err := OpenStore(cfg, encryptor)
 	must(logger, err, "cannot open state file")
 	defer store.Close()
+	if cfg.EncryptionKeyPrevious != "" {
+		previous, err := NewPreviousKeyDecryptor(cfg.EncryptionKeyPrevious)
+		must(logger, err, "invalid previous encryption key")
+		rotated, err := store.RotateBindings(previous)
+		must(logger, err, "cannot rotate binding credentials to the new key")
+		logger.Info("rotated database encryption", "records", rotated)
+	}
 
 	db := NewDB(cfg)
 	server := &http.Server{

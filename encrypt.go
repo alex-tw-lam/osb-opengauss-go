@@ -1,7 +1,8 @@
 // encrypt.go encrypts and decrypts binding credentials at rest in the state
 // database, using AES-256-GCM with the key supplied by the configuration
 // (base64 32 bytes). Without a key, credentials are stored in plaintext and
-// the broker logs a warning at startup.
+// the broker logs a warning at startup. While STATE_ENCRYPTION_KEY_PREVIOUS
+// is set, the store re-encrypts old records with the new key at startup.
 //
 // Same approach as the Cloud Foundry cloud-service-broker: stdlib crypto,
 // GCM mode, random nonce prefixed to the ciphertext.
@@ -72,14 +73,32 @@ func NewEncryptor(keyB64 string) (Encryptor, error) {
 	if keyB64 == "" {
 		return NoopEncryptor{}, nil
 	}
+	key, err := parseKey(keyB64, "STATE_ENCRYPTION_KEY")
+	if err != nil {
+		return nil, err
+	}
+	return &GCMEncryptor{key: key}, nil
+}
+
+// NewPreviousKeyDecryptor builds a decryptor for the key being retired, so
+// RotateBindings can read records written before a rotation.
+func NewPreviousKeyDecryptor(keyB64 string) (Encryptor, error) {
+	key, err := parseKey(keyB64, "STATE_ENCRYPTION_KEY_PREVIOUS")
+	if err != nil {
+		return nil, err
+	}
+	return &GCMEncryptor{key: key}, nil
+}
+
+func parseKey(keyB64, envName string) ([32]byte, error) {
 	key, err := base64.StdEncoding.DecodeString(keyB64)
 	if err != nil {
-		return nil, fmt.Errorf("STATE_ENCRYPTION_KEY is not valid base64: %w", err)
+		return [32]byte{}, fmt.Errorf("%s is not valid base64: %w", envName, err)
 	}
 	if len(key) != 32 {
-		return nil, fmt.Errorf("STATE_ENCRYPTION_KEY must decode to 32 bytes, got %d", len(key))
+		return [32]byte{}, fmt.Errorf("%s must decode to 32 bytes, got %d", envName, len(key))
 	}
 	var keyArray [32]byte
 	copy(keyArray[:], key)
-	return &GCMEncryptor{key: keyArray}, nil
+	return keyArray, nil
 }

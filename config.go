@@ -39,6 +39,9 @@ type Config struct {
 	// base64 32-byte key encrypting binding credentials at rest; empty
 	// means plaintext storage with a startup warning.
 	EncryptionKey string
+	// base64 32-byte key being retired; while set, startup re-encrypts
+	// every record still encrypted with it (key rotation).
+	EncryptionKeyPrevious string
 
 	// Prefix for every database / role / user the broker creates.
 	NamePrefix string
@@ -63,24 +66,25 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		DBHost:           env("GAUSSDB_HOST", "localhost"),
-		DBPort:           dbPort,
-		DBUser:           env("GAUSSDB_ADMIN_USER", "gaussdb"),
-		DBPassword:       os.Getenv("GAUSSDB_ADMIN_PASSWORD"),
-		DBAdminName:      env("GAUSSDB_ADMIN_DB", "postgres"),
-		DBSSLMode:        env("GAUSSDB_SSLMODE", "disable"),
-		DBConnTimeout:    connTimeout,
-		PlansFile:        env("GAUSSDB_PLANS_FILE", "plans.toml"),
-		TemplateDir:      os.Getenv("TEMPLATE_DIR"),
-		TablespacePrefix: env("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "broker"),
-		BrokerUsername:   env("BROKER_USERNAME", "broker"),
-		BrokerPassword:   os.Getenv("BROKER_PASSWORD"),
-		StatePath:        env("STATE_DB_PATH", "osb-opengauss-state.db"),
-		StateDSN:         os.Getenv("STATE_DSN"),
-		EncryptionKey:    os.Getenv("STATE_ENCRYPTION_KEY"),
-		NamePrefix:       env("GAUSSDB_NAME_PREFIX", "gdb"),
-		Host:             env("BROKER_HOST", "127.0.0.1"),
-		Port:             brokerPort,
+		DBHost:                env("GAUSSDB_HOST", "localhost"),
+		DBPort:                dbPort,
+		DBUser:                env("GAUSSDB_ADMIN_USER", "gaussdb"),
+		DBPassword:            os.Getenv("GAUSSDB_ADMIN_PASSWORD"),
+		DBAdminName:           env("GAUSSDB_ADMIN_DB", "postgres"),
+		DBSSLMode:             env("GAUSSDB_SSLMODE", "disable"),
+		DBConnTimeout:         connTimeout,
+		PlansFile:             env("GAUSSDB_PLANS_FILE", "plans.toml"),
+		TemplateDir:           os.Getenv("TEMPLATE_DIR"),
+		TablespacePrefix:      env("GAUSSDB_TABLESPACE_LOCATION_PREFIX", "broker"),
+		BrokerUsername:        env("BROKER_USERNAME", "broker"),
+		BrokerPassword:        os.Getenv("BROKER_PASSWORD"),
+		StatePath:             env("STATE_DB_PATH", "osb-opengauss-state.db"),
+		StateDSN:              os.Getenv("STATE_DSN"),
+		EncryptionKey:         os.Getenv("STATE_ENCRYPTION_KEY"),
+		EncryptionKeyPrevious: os.Getenv("STATE_ENCRYPTION_KEY_PREVIOUS"),
+		NamePrefix:            env("GAUSSDB_NAME_PREFIX", "gdb"),
+		Host:                  env("BROKER_HOST", "127.0.0.1"),
+		Port:                  brokerPort,
 	}
 	cfg.TablespacePrefix = strings.Trim(cfg.TablespacePrefix, "/")
 	if !locationPrefixPattern.MatchString(cfg.TablespacePrefix) {
@@ -91,6 +95,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.BrokerPassword == "" {
 		return nil, fmt.Errorf("BROKER_PASSWORD must be set; the broker refuses to start with no API password")
+	}
+	if cfg.EncryptionKeyPrevious != "" && cfg.EncryptionKey == "" {
+		return nil, fmt.Errorf("STATE_ENCRYPTION_KEY_PREVIOUS is set but STATE_ENCRYPTION_KEY is not; rotation needs a new key to rotate to")
 	}
 	return cfg, nil
 }

@@ -241,6 +241,43 @@ func (s *Store) BindingsForInstance(instanceID string) ([]BindingInfo, error) {
 	return result, nil
 }
 
+// RotateBindings re-encrypts every binding credential that only the previous
+// key can read, so the previous key can be retired once the call succeeds.
+// A record neither key can read is an error: rotation refuses to start on a
+// state database it cannot fully decrypt. Returns how many records moved.
+func (s *Store) RotateBindings(previous Encryptor) (int, error) {
+	var records []BindingRecord
+	if err := s.db.Find(&records).Error; err != nil {
+		return 0, fmt.Errorf("cannot read bindings for rotation: %w", err)
+	}
+	rotated := 0
+	for _, record := range records {
+		ciphertext, err := base64.StdEncoding.DecodeString(record.Credentials)
+		if err != nil {
+			return rotated, fmt.Errorf("cannot decode credentials of binding %s: %w", record.BindingID, err)
+		}
+		plain, err := s.encryptor.Decrypt(ciphertext)
+		if err != nil {
+			plain, err = previous.Decrypt(ciphertext)
+			if err != nil {
+				return rotated, fmt.Errorf("cannot decrypt credentials of binding %s with either key: %w", record.BindingID, err)
+			}
+		} else {
+			continue // already on the current key
+		}
+		reencrypted, err := s.encryptor.Encrypt(plain)
+		if err != nil {
+			return rotated, fmt.Errorf("cannot re-encrypt credentials of binding %s: %w", record.BindingID, err)
+		}
+		if err := s.db.Model(&BindingRecord{}).Where("binding_id = ?", record.BindingID).
+			Update("credentials", base64.StdEncoding.EncodeToString(reencrypted)).Error; err != nil {
+			return rotated, fmt.Errorf("cannot rewrite credentials of binding %s: %w", record.BindingID, err)
+		}
+		rotated++
+	}
+	return rotated, nil
+}
+
 // decryptCredentials turns the stored column value back into a credential map.
 func (s *Store) decryptCredentials(bindingID, stored string) (map[string]string, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(stored)
